@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:codex:engineering-graph:task-brief:v1",
+  "title": "Immutable engineering graph task brief",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "objective", "user_outcome", "request_mode", "minimum_route", "mandatory_impact_tags", "scope", "constraints", "acceptance_criteria", "risk_level", "authority", "policy_approval", "evidence_paths", "inspection_budget", "required_check_ids", "required_human_decisions"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "task_id": {"$ref": "#/$defs/id"},
+    "objective": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "user_outcome": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "request_mode": {"enum": ["advisory", "design_only", "delivery"]},
+    "minimum_route": {"enum": ["advisory", "design_only", "fast_path", "full_delivery"]},
+    "mandatory_impact_tags": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+    "scope": {"type": "object", "additionalProperties": false, "required": ["included", "excluded"], "properties": {"included": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}, "excluded": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}}},
+    "constraints": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+    "acceptance_criteria": {"type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": false, "required": ["id", "text"], "properties": {"id": {"$ref": "#/$defs/id"}, "text": {"type": "string", "minLength": 1}}}},
+    "risk_level": {"enum": ["low", "medium", "high", "critical"]},
+    "authority": {"type": "object", "additionalProperties": false, "required": ["capabilities"], "properties": {"capabilities": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/capability"}}}},
+    "policy_approval": {"type": "object", "additionalProperties": false, "required": ["sha256", "authority_ref"], "properties": {"sha256": {"$ref": "#/$defs/digest"}, "authority_ref": {"type": "string", "pattern": "^authority:[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}}},
+    "evidence_paths": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+    "inspection_budget": {"type": "object", "additionalProperties": false, "required": ["file_reads", "discovery_commands"], "properties": {"file_reads": {"type": "integer", "minimum": 0}, "discovery_commands": {"type": "integer", "minimum": 0}}},
+    "required_check_ids": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+    "required_human_decisions": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "capability": {"type": "object", "additionalProperties": false, "required": ["effect", "action", "target_ref"], "properties": {"effect": {"enum": ["filesystem_read", "filesystem_write", "command", "external_read", "external_write", "destructive", "publish", "deploy"]}, "action": {"$ref": "#/$defs/id"}, "target_ref": {"type": "string", "minLength": 1}}}
+  }
+}
+

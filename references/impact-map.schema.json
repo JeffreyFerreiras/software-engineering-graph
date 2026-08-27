@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:codex:engineering-graph:impact-map:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "route_label", "impact_tags", "evidence_refs"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "task_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
+    "route_label": {"enum": ["advisory", "design_only", "full_delivery", "fast_path"]},
+    "impact_tags": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}},
+    "evidence_refs": {"type": "array", "uniqueItems": true, "items": {"type": "string", "maxLength": 1200}}
+  }
+}
+

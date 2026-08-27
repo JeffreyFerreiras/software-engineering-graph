@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:codex:engineering-graph:branch-envelope:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "branch_id", "node_instance_id", "node_key", "role", "mandatory", "generation", "status", "inputs", "effect_capabilities", "output_contract", "stopping_condition", "artifact_ref", "evidence", "decision", "retry_count", "max_retries", "failure_code", "started_at", "finished_at"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"$ref": "#/$defs/id"},
+    "branch_id": {"type": "string", "pattern": "^g2-[0-9a-f]{24}$"},
+    "node_instance_id": {"type": "string", "pattern": "^g2-[0-9a-f]{24}$"},
+    "node_key": {"$ref": "#/$defs/id"},
+    "role": {"$ref": "#/$defs/id"},
+    "mandatory": {"type": "boolean"},
+    "generation": {"type": "integer", "minimum": 0},
+    "status": {"enum": ["pending", "ready", "running", "succeeded", "failed", "timed_out", "skipped"]},
+    "inputs": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
+    "effect_capabilities": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/capability"}},
+    "output_contract": {"$ref": "#/$defs/outputContract"},
+    "stopping_condition": {"type": "object", "additionalProperties": false, "required": ["kind", "max_branch_attempts"], "properties": {"kind": {"const": "valid_result_returned"}, "max_branch_attempts": {"type": "integer", "minimum": 1}}},
+    "artifact_ref": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/contentRef"}]},
+    "evidence": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/contentRef"}},
+    "decision": {"type": ["string", "null"]},
+    "retry_count": {"type": "integer", "minimum": 0},
+    "max_retries": {"type": "integer", "minimum": 0},
+    "failure_code": {"type": ["string", "null"]},
+    "started_at": {"type": ["string", "null"]},
+    "finished_at": {"type": ["string", "null"]}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "artifact": {"type": "object", "additionalProperties": false, "required": ["kind", "ref", "sha256", "size_bytes"], "properties": {"kind": {"$ref": "#/$defs/id"}, "ref": {"type": "string"}, "sha256": {"$ref": "#/$defs/digest"}, "size_bytes": {"type": "integer", "minimum": 0, "maximum": 4194304}, "content": {"type": "object"}}},
+    "contentRef": {"type": "object", "additionalProperties": false, "required": ["kind", "ref", "sha256"], "properties": {"kind": {"$ref": "#/$defs/id"}, "ref": {"type": "string"}, "sha256": {"$ref": "#/$defs/digest"}}},
+    "capability": {"type": "object", "additionalProperties": false, "required": ["effect", "action", "target_ref"], "properties": {"effect": {"type": "string"}, "action": {"$ref": "#/$defs/id"}, "target_ref": {"type": "string"}}},
+    "outputContract": {"type": "object", "additionalProperties": false, "required": ["artifact_kind", "schema_version", "artifact_required"], "properties": {"artifact_kind": {"$ref": "#/$defs/id"}, "schema_version": {"const": 1}, "artifact_required": {"type": "boolean"}, "decision_values": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}, "artifact_required_for_decisions": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}, "evidence_required_for_decisions": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}}}
+  }
+}

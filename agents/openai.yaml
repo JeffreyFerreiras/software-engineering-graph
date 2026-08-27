@@ -1,0 +1,4 @@
+interface:
+  display_name: "Software Engineering Graph"
+  short_description: "Orchestrate rigorous application delivery"
+  default_prompt: "Use $software-engineering-graph to plan, implement, review, and verify this application change."

@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:codex:engineering-graph:repository-config:v1",
+  "title": "Engineering graph repository policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "repository_id", "compatible_engine", "artifact_roots", "artifact_kinds", "impact_tags", "routes", "node_templates", "specialists", "limits", "required_checks", "role_capabilities", "denied_patterns"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "repository_id": {"$ref": "#/$defs/id"},
+    "compatible_engine": {"type": "object", "additionalProperties": false, "required": ["min", "max_exclusive"], "properties": {"min": {"$ref": "#/$defs/version"}, "max_exclusive": {"$ref": "#/$defs/version"}}},
+    "artifact_roots": {"type": "object", "additionalProperties": false, "required": ["repo", "profile"], "properties": {"repo": {"$ref": "#/$defs/nonEmptyUniqueStrings"}, "profile": {"$ref": "#/$defs/nonEmptyUniqueStrings"}}},
+    "artifact_kinds": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/artifactKind"}},
+    "impact_tags": {"$ref": "#/$defs/nonEmptyUniqueIds"},
+    "routes": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/route"}},
+    "node_templates": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/nodeTemplate"}},
+    "specialists": {"type": "object", "additionalProperties": {"$ref": "#/$defs/specialist"}},
+    "limits": {"$ref": "#/$defs/limits"},
+    "required_checks": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/check"}},
+    "role_capabilities": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/capability"}}},
+    "denied_patterns": {"$ref": "#/$defs/nonEmptyUniqueStrings"}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
+    "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "nonEmptyUniqueStrings": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "nonEmptyUniqueIds": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+    "artifactKind": {"type": "object", "additionalProperties": false, "required": ["extensions", "max_bytes"], "properties": {"extensions": {"$ref": "#/$defs/nonEmptyUniqueStrings"}, "max_bytes": {"type": "integer", "minimum": 1, "maximum": 4194304}}},
+    "route": {"type": "object", "additionalProperties": false, "required": ["entry_node", "design_gates", "delivery_gates", "closure"], "properties": {"entry_node": {"$ref": "#/$defs/id"}, "design_gates": {"type": "boolean"}, "delivery_gates": {"type": "boolean"}, "closure": {"$ref": "#/$defs/id"}}},
+    "outputContract": {"type": "object", "additionalProperties": false, "required": ["artifact_kind", "schema_version", "artifact_required"], "properties": {"artifact_kind": {"$ref": "#/$defs/id"}, "schema_version": {"const": 1}, "artifact_required": {"type": "boolean"}, "decision_values": {"$ref": "#/$defs/nonEmptyUniqueIds"}, "artifact_required_for_decisions": {"$ref": "#/$defs/nonEmptyUniqueIds"}, "evidence_required_for_decisions": {"$ref": "#/$defs/nonEmptyUniqueIds"}}},
+    "nodeTemplate": {"type": "object", "additionalProperties": false, "required": ["role", "stages", "mandatory", "max_retries", "output_contract"], "properties": {"role": {"$ref": "#/$defs/id"}, "stages": {"$ref": "#/$defs/nonEmptyUniqueIds"}, "mandatory": {"type": "boolean"}, "max_retries": {"type": "integer", "minimum": 0}, "output_contract": {"$ref": "#/$defs/outputContract"}}},
+    "specialist": {"type": "object", "additionalProperties": false, "required": ["node_key", "role", "stages", "mandatory"], "properties": {"node_key": {"$ref": "#/$defs/id"}, "role": {"$ref": "#/$defs/id"}, "stages": {"$ref": "#/$defs/nonEmptyUniqueIds"}, "mandatory": {"type": "boolean"}}},
+    "limits": {"type": "object", "additionalProperties": false, "required": ["design_revisions", "delivery_repairs", "inspection", "manifest_bytes", "artifact_bytes"], "properties": {"design_revisions": {"type": "integer", "minimum": 0, "maximum": 3}, "delivery_repairs": {"type": "integer", "minimum": 0, "maximum": 3}, "inspection": {"type": "object", "additionalProperties": false, "required": ["file_reads", "discovery_commands"], "properties": {"file_reads": {"type": "integer", "minimum": 0, "maximum": 12}, "discovery_commands": {"type": "integer", "minimum": 0, "maximum": 8}}}, "manifest_bytes": {"type": "integer", "minimum": 1, "maximum": 262144}, "artifact_bytes": {"type": "integer", "minimum": 1, "maximum": 4194304}}},
+    "check": {"type": "object", "additionalProperties": false, "required": ["command_id", "mandatory"], "properties": {"command_id": {"$ref": "#/$defs/id"}, "mandatory": {"const": true}}},
+    "capability": {"type": "object", "additionalProperties": false, "required": ["effect", "action", "target_ref"], "properties": {"effect": {"enum": ["filesystem_read", "filesystem_write", "command", "external_read", "external_write", "destructive", "publish", "deploy"]}, "action": {"$ref": "#/$defs/id"}, "target_ref": {"type": "string", "minLength": 1, "maxLength": 1200}}}
+  }
+}
