@@ -66,6 +66,9 @@ Use these base roles when available:
 
 Use repository-defined specialists when its routing rules require them. If a named profile is unavailable, spawn a bounded agent with the same contract instead of weakening a required gate.
 
+The Impact Mapper selects route, risk, and specialist tags only. The Supervisor owns fan-out
+eligibility after checking branch dependencies and shared resources.
+
 ## Select the route
 
 Choose the smallest route that preserves the required independence:
@@ -153,7 +156,16 @@ Have the Supervisor deliver the result, validation evidence, remaining risks, an
 
 ## Concurrency and evidence rules
 
-- Parallelize read-only exploration, design reviews, code review, test analysis, and specialist reviews only when their inputs are stable and assignments do not overlap.
+- Before every Supervisor fan-out, deterministically check branch dependencies and shared resources.
+  Parallelize branches only when neither consumes the other's result and they share no writable
+  files, mutable state, exclusive devices, constrained or rate-limited external services, or other
+  resource that imposes ordering. Otherwise serialize them or add an explicit dependency edge.
+- Start every independent reviewer and read-only specialist in fresh context (`fork_turns: "none"`
+  or an explicitly equivalent fresh-session mechanism). Reconstruct its prompt only from the
+  verified immutable task brief, approved design when applicable, stable diff or reference,
+  acceptance criteria, and required evidence. Do not pass worker chat history, prior reasoning, or
+  Supervisor narration. A same-role repair or revision follow-up may retain that role agent's own
+  context.
 - Serialize all worktree writes. Never assign the same files or responsibility to concurrent writers.
 - Give every node bounded inputs, permitted actions, expected output, and a stopping condition.
 - Give exploratory nodes a file and command budget. Prefer a useful partial packet over an unbounded repository survey.
