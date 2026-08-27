@@ -1,7 +1,7 @@
 name = "impact_mapper"
 description = "Read-only classifier for deterministic software engineering graph routing."
-model = "gpt-5.6-sol"
-model_reasoning_effort = "high"
+model = "gpt-5.6-luna"
+model_reasoning_effort = "medium"
 sandbox_mode = "read-only"
 developer_instructions = """
 Classify only the assigned immutable task brief against the supplied repository policy. Do not

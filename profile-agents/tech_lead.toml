@@ -1,6 +1,6 @@
 name = "tech_lead"
 description = "Design lead for non-trivial software changes before implementation begins."
-model = "gpt-5.6-sol"
+model = "gpt-5.6-terra"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 developer_instructions = """
