@@ -230,6 +230,72 @@ class StandaloneAcceptanceTests(unittest.TestCase):
             if line.startswith("# ")
         )
         self.assertEqual("# Software Engineering Graph", skill_heading)
+
+        skill_guidance = " ".join(
+            (REPOSITORY_ROOT / "SKILL.md").read_text(encoding="utf-8").lower().split()
+        )
+        senior_guidance = " ".join(
+            (REPOSITORY_ROOT / "profile-agents" / "senior_engineer.toml")
+            .read_text(encoding="utf-8").lower().split()
+        )
+        reviewer_guidance = " ".join(
+            (REPOSITORY_ROOT / "profile-agents" / "code_reviewer.toml")
+            .read_text(encoding="utf-8").lower().split()
+        )
+        for name, guidance in (
+            ("skill", skill_guidance),
+            ("senior engineer", senior_guidance),
+            ("code reviewer", reviewer_guidance),
+        ):
+            with self.subTest(skill_discovery_guidance=name):
+                self.assertIn("skill catalog exposed", guidance)
+                self.assertIn("local skills explicitly declared", guidance)
+                self.assertIn("smallest clearly relevant skill set", guidance)
+                self.assertIn("selected skill", guidance)
+                self.assertIn("fully before act", guidance)
+                self.assertIn("do not prescribe a specific optional skill by name", guidance)
+                self.assertIn("do not crawl arbitrary profile or global skill directories", guidance)
+                self.assertIn("may change", guidance)
+                self.assertIn("method only", guidance)
+                self.assertIn("scope", guidance)
+                self.assertIn("role authority", guidance)
+                self.assertIn("model or reasoning effort", guidance)
+                self.assertIn("writable files", guidance)
+                self.assertIn("allowed tests or commands", guidance)
+                self.assertIn("delegation", guidance)
+                self.assertIn("external effects", guidance)
+                self.assertIn("install", guidance)
+                self.assertIn("synchroniz", guidance)
+                self.assertIn("remove", guidance)
+                self.assertIn("profiles", guidance)
+                self.assertIn("consumer repositories", guidance)
+                self.assertIn("user instructions", guidance)
+                self.assertIn("repository instructions", guidance)
+                self.assertIn("approved task artifacts", guidance)
+                self.assertIn("control", guidance)
+                self.assertIn("catalog is unavailable", guidance)
+                self.assertTrue(
+                    "unreadable" in guidance or "cannot be read" in guidance,
+                    "missing selected-skill read-failure guidance in {}".format(name),
+                )
+                self.assertIn("skill usage", guidance)
+                self.assertIn("safe source or provenance", guidance)
+                self.assertIn("relevance reason", guidance)
+                self.assertIn("none", guidance)
+
+        self.assertNotIn("every role handoff", skill_guidance)
+        self.assertIn(
+            "senior engineer and code reviewer handoffs must each include a `skill usage` section",
+            skill_guidance,
+        )
+        self.assertIn("sole production-code and test-code writer", senior_guidance)
+        self.assertIn('sandbox_mode = "workspace-write"', senior_guidance)
+        self.assertIn('sandbox_mode = "read-only"', reviewer_guidance)
+        self.assertIn("remain read-only", reviewer_guidance)
+        self.assertEqual(
+            set(PROFILE_AGENTS),
+            {path.name for path in (REPOSITORY_ROOT / "profile-agents").iterdir()},
+        )
         for name in ("README.md", "AGENTS.md", "docs/technical-design.md"):
             headings = [
                 line.lower() for line in (REPOSITORY_ROOT / name).read_text(encoding="utf-8").splitlines()

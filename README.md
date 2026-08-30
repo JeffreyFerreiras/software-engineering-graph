@@ -26,6 +26,12 @@ for critical delivery tasks. Each run now creates a T-shirt-sized execution plan
 reasoning-effort assignments before any branch can be claimed. `record plan-approval` is required before
 Impact Mapper or any other agent executes; the approved plan is included in every branch envelope.
 
+Before acting, the Senior Engineer and Code Reviewer inspect only session-exposed and
+repository-instruction-declared skills, select and fully read the smallest relevant set, and report
+their selection or `None` under `Skill usage`. Skills may change method only; they do not expand role
+authority, approved scope, writable files, tests, delegation, external effects, or profile and consumer
+permissions. The Code Reviewer remains read-only and the Senior Engineer remains the sole code writer.
+
 The operational order is `init` with an optional `--size`, review the returned plan, record
 `record plan-approval`, and only then use `next --claim`. Before any multi-member fixed review fan-out,
 `status` requires one immutable `record fanout-assessment`. Its manifest must cover every member's exact
