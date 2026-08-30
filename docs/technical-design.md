@@ -1,8 +1,15 @@
 # Standalone Software Engineering Graph source repository
 
+> Current status: the original source-copy design below is historical. The local graph engine now
+> includes attempt fencing, expiring leases and heartbeats, provider-produced check receipts, local
+> approval attestations, configurable check commands, and a deterministic critical-risk security
+> floor. The source checkout still does not implement a model-provider agent dispatcher or CI.
+
 ## Design status
 
-READY for Architect review and implementation.
+IMPLEMENTED local hardening; source-copy sections retained as historical context.
+
+## Historical source-copy design
 
 This design creates an exact local source repository copy of the existing profile skill plus seven
 generic profile-agent definitions. It does not redesign, install, migrate, bootstrap, publish, or

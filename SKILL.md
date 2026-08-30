@@ -6,8 +6,8 @@ description: Orchestrate rigorous software application work through a supervisor
 # Software Engineering Graph
 
 Use the local control ledger for every new graph run. Treat it as a deterministic coordination and
-recovery aid, not a security boundary or an agent executor. Keep the primary agent as Supervisor and
-the sole CLI mutator and dispatcher. Never give branch agents database paths or operation IDs.
+recovery aid, not a security boundary or a model-agent executor. Keep the primary agent as Supervisor
+and the sole CLI mutator and dispatcher. Never give branch agents database paths or operation IDs.
 
 ## Start a run
 
@@ -22,7 +22,8 @@ the sole CLI mutator and dispatcher. Never give branch agents database paths or 
 4. Dispatch only the envelope returned by `next --claim`. The first branch is always
    `impact_mapper`.
 5. Put each returned branch manifest in the derived run inbox shown by `init` or `status`, then use
-   `record branch-result`. Branch manifests never contain control mutations.
+   `record branch-result` with the claimed `attempt_id` and `claim_token`. Branch manifests never
+   contain control mutations.
 
 On Windows, pass `--ack-degraded-permissions` because Python cannot prove profile DACL exclusivity.
 Pass `--ack-degraded-durability` only when directory sync is genuinely unavailable and the reported
@@ -35,15 +36,18 @@ degraded mode is acceptable. These flags acknowledge platform limitations; they 
 - Use `join validate` before `join advance`. Collection joins only freeze terminal branch results
   and activate a typed Supervisor consolidation branch. Consolidation joins alone apply precedence,
   consume loop budgets, block, or activate the next generation.
-- Use the typed `record timeout`, `skip`, `retry`, `approval`, `budget-use`,
-  `acceptance-evidence`, and `check-evidence` commands for Supervisor mutations.
+- Use the typed `record timeout`, `skip`, `retry`, `heartbeat`, `approval`, `budget-use`, and
+  `acceptance-evidence` commands for Supervisor mutations. Timeout, result, and heartbeat mutations
+  must present the current attempt fence. Use `check run` for a policy-configured local command;
+  required checks are satisfied only by its ledger receipt, not by a user-authored PASS file.
 - Read consolidation inputs only from the claimed envelope. Its canonical `collection` input embeds
   every frozen branch result and terminal status, so consolidation branches never need ledger or
   database access.
 - Give every mutation a unique opaque operation ID. An identical replay is a no-op; changed input
   under the same ID is an operation conflict.
 - Use `resume` after interruption. Resolve every running branch by ingesting its actual result or
-  recording an explicit timeout. Never infer completion from elapsed time.
+  recording an explicit timeout with its current attempt fence. Expired leases appear as a timeout
+  action; send `record heartbeat` before expiry when work is still active.
 - Use `complete` only after the closure join, acceptance evidence, approvals, and required checks
   are satisfied. Use `abort` for rollback; retained databases are audit evidence and are not deleted.
 
@@ -96,6 +100,9 @@ Choose the smallest route that preserves the required independence:
   and delivery generation without changing the immutable fast-path route floor.
 
 Treat repository routing as authoritative when it requires a stricter route.
+
+Critical delivery tasks are engine-forced to `full_delivery` and must include the
+`security_privacy` impact tag. The impact mapper cannot remove that floor.
 
 ## Manual fallback and graph roles
 

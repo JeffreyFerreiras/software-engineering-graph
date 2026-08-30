@@ -3,15 +3,18 @@
 import argparse
 import json
 import os
+from datetime import datetime, timezone
+import secrets
 import sqlite3
 import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from .config import load_policy
+from .checks import configured_check, run_check, validate_check_receipt
+from .config import branch_lease_seconds, load_policy
 from .contracts import (
-    ContractError, Snapshot, authoritative_task_subset, digest, opaque, require_keys,
+    ContractError, Snapshot, authoritative_task_subset, bounded_string, digest, opaque, require_keys,
     safe_json_snapshot, validate_impact_map, validate_ref, validate_result_manifest,
     validate_task_brief,
 )
@@ -26,7 +29,7 @@ from .planner import (
     envelope, implementation_node, initial_route_nodes, join_id, next_join_for_success,
     revised_design_node,
 )
-from .state import StateError, StateStore, utc_now
+from .state import StateError, StateStore, current_actor, current_host_identity, utc_after, utc_now
 from .validator import (
     canonical_collection_members, join_members, validate_consolidation_manifest,
     validate_join, verify_resume, verify_semantic_state,
@@ -174,15 +177,58 @@ def _validate_control_manifest(value: Any, kind: str, run_id: str, branch_id: Op
     required = {"schema_version", "kind", "run_id", "reason_code", "evidence"}
     if branch_id is not None:
         required.add("branch_id")
-    require_keys(value, required, required, "evidence_manifest")
+    allowed = required | ({"attempt_id", "claim_digest"} if kind == "timeout" else set())
+    require_keys(value, required, allowed, "evidence_manifest")
     if value["schema_version"] != 1 or value["kind"] != kind or value["run_id"] != run_id or value["reason_code"] != reason_code:
         raise ContractError("evidence_manifest", "CONTROL_MANIFEST_MISMATCH")
     if branch_id is not None and value["branch_id"] != branch_id:
         raise ContractError("evidence_manifest", "CONTROL_MANIFEST_MISMATCH")
+    if kind == "timeout":
+        require_keys(
+            value,
+            required | {"attempt_id", "claim_digest"},
+            required | {"attempt_id", "claim_digest"},
+            "evidence_manifest",
+        )
+        opaque(value["attempt_id"], "attempt_id")
+        digest(value["claim_digest"], "claim_digest")
     if not isinstance(value["evidence"], list):
         raise ContractError("evidence", "INVALID_LIST")
     normalized = dict(value)
     return normalized
+
+
+def _claim_token_digest(token: str) -> str:
+    if not token:
+        raise ContractError("claim_token", "MISSING_FIELD")
+    return sha256_bytes(token.encode("utf-8"))
+
+
+def _check_attempt(
+    branch: Mapping[str, Any], env: Mapping[str, Any], attempt_id: str, claim_token: str,
+    manifest: Optional[Mapping[str, Any]] = None,
+) -> str:
+    opaque(attempt_id, "attempt_id")
+    token_digest = _claim_token_digest(claim_token)
+    if env.get("attempt_id") != attempt_id or env.get("claim_digest") != token_digest:
+        raise StateError("ATTEMPT_FENCE_MISMATCH")
+    if manifest is not None and (
+        manifest.get("attempt_id") != attempt_id or manifest.get("claim_digest") != token_digest
+    ):
+        raise StateError("ATTEMPT_FENCE_MISMATCH")
+    if branch["status"] != "running":
+        raise StateError("INVALID_BRANCH_TRANSITION")
+    return token_digest
+
+
+def _lease_expired(value: Optional[str]) -> bool:
+    if not value:
+        return True
+    try:
+        expiry = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    return datetime.now(timezone.utc) >= expiry
 
 
 def command_init(args: argparse.Namespace, repo: Path, policy: Mapping[str, Any], policy_snapshot: Snapshot, store: StateStore) -> Dict[str, Any]:
@@ -229,7 +275,12 @@ def _record_branch_result(
     policy: Mapping[str, Any], task: Mapping[str, Any], store: StateStore,
 ) -> Dict[str, Any]:
     snapshot = _manifest_snapshot(store, policy, run["run_id"], args.result_manifest)
-    request = {"command": "record.branch-result", "branch_id": args.branch_id, "manifest_digest": snapshot.digest}
+    token_digest = _claim_token_digest(args.claim_token)
+    request = {
+        "command": "record.branch-result", "branch_id": args.branch_id,
+        "attempt_id": opaque(args.attempt_id, "attempt_id"),
+        "claim_digest": token_digest, "manifest_digest": snapshot.digest,
+    }
 
     def action(conn: sqlite3.Connection, current: sqlite3.Row, revision: int) -> Dict[str, Any]:
         current_branch = conn.execute("SELECT * FROM nodes WHERE branch_id=?", (args.branch_id,)).fetchone()
@@ -238,6 +289,9 @@ def _record_branch_result(
         if current_branch["status"] != "running":
             raise StateError("INVALID_BRANCH_TRANSITION")
         env = json.loads(current_branch["envelope_json"])
+        _check_attempt(current_branch, env, args.attempt_id, args.claim_token, snapshot.parsed)
+        if _lease_expired(env.get("lease_expires_at")):
+            raise StateError("LEASE_EXPIRED")
         branch_contract = dict(current_branch)
         branch_contract["run_id"] = current["run_id"]
         branch_contract["output_contract"] = env["output_contract"]
@@ -350,15 +404,28 @@ def _record_control(
     if kind in {"timeout", "skip"}:
         snapshot = _manifest_snapshot(store, policy, run["run_id"], args.evidence_manifest, 128 * 1024)
         request.update({"reason_code": opaque(args.reason_code, "reason_code"), "evidence_digest": snapshot.digest})
+        if kind == "timeout":
+            request.update({
+                "attempt_id": opaque(args.attempt_id, "attempt_id"),
+                "claim_digest": _claim_token_digest(args.claim_token),
+            })
     elif kind == "retry":
         request["reason_code"] = opaque(args.reason_code, "reason_code")
+    elif kind == "heartbeat":
+        request.update({
+            "attempt_id": opaque(args.attempt_id, "attempt_id"),
+            "claim_digest": _claim_token_digest(args.claim_token),
+        })
     elif kind == "approval":
         request.update({
             "approval_id": opaque(args.approval_id, "approval_id"),
             "scope_ref": validate_ref(args.scope_ref, "scope_ref", content_required=True), "decision": args.decision,
             "authority_ref": validate_ref(args.authority_ref, "authority_ref"),
             "artifact_sha256": digest(args.artifact_sha256, "artifact_sha256"),
+            "actor": current_actor() if args.actor is None else bounded_string(args.actor, "actor", 256),
         })
+        if request["actor"] != current_actor():
+            raise StateError("APPROVAL_ACTOR_MISMATCH")
     elif kind == "budget-use":
         if args.amount <= 0:
             raise ContractError("amount", "POSITIVE_INTEGER_REQUIRED")
@@ -374,7 +441,7 @@ def _record_control(
             request.update({"check_id": opaque(args.check_id, "check_id"), "outcome": args.outcome})
 
     def action(conn: sqlite3.Connection, current: sqlite3.Row, revision: int) -> Dict[str, Any]:
-        if kind in {"timeout", "skip", "retry"}:
+        if kind in {"timeout", "skip", "retry", "heartbeat"}:
             branch = conn.execute("SELECT * FROM nodes WHERE branch_id=?", (args.branch_id,)).fetchone()
             if not branch:
                 raise StateError("BRANCH_NOT_FOUND")
@@ -385,6 +452,17 @@ def _record_control(
             if sealed:
                 raise StateError("JOIN_ALREADY_SEALED")
             env = json.loads(branch["envelope_json"])
+            if kind in {"timeout", "heartbeat"}:
+                _check_attempt(branch, env, args.attempt_id, args.claim_token)
+                if kind == "heartbeat" and _lease_expired(env.get("lease_expires_at")):
+                    raise StateError("LEASE_EXPIRED")
+                if kind == "heartbeat":
+                    env["lease_expires_at"] = utc_after(branch_lease_seconds(policy))
+                    conn.execute(
+                        "UPDATE nodes SET envelope_json=? WHERE branch_id=?",
+                        (json.dumps(env, sort_keys=True), args.branch_id),
+                    )
+                    return {"code": "HEARTBEAT_RECORDED", "branch_id": args.branch_id, "lease_expires_at": env["lease_expires_at"]}
             if kind == "timeout":
                 if branch["status"] != "running":
                     raise StateError("INVALID_BRANCH_TRANSITION")
@@ -403,6 +481,7 @@ def _record_control(
                 new_status = "ready"
                 env["retry_count"] += 1
                 env["started_at"] = env["finished_at"] = None
+                env["attempt_id"] = env["claim_digest"] = env["lease_expires_at"] = None
                 env.update({"artifact_ref": None, "evidence": [], "decision": None, "failure_code": None})
                 conn.execute(
                     "UPDATE nodes SET retry_count=retry_count+1,result_json=NULL,result_digest=NULL,failure_code=NULL,reason_code=NULL,finished_at=NULL WHERE branch_id=?",
@@ -432,6 +511,8 @@ def _record_control(
                     "branch_id": branch["branch_id"], "reason_code": request["reason_code"],
                     "evidence_manifest_ref": control_artifact.ref,
                 }
+                if kind == "timeout":
+                    result.update({"attempt_id": request["attempt_id"], "claim_digest": request["claim_digest"]})
                 branch_artifact = canonical_ledger_artifact(branch["branch_id"], kind, result)
                 persist_artifact(conn, current["run_id"], branch_artifact)
                 env["artifact_ref"] = {"kind": branch_artifact.kind, "ref": branch_artifact.ref, "sha256": branch_artifact.sha256}
@@ -461,7 +542,19 @@ def _record_control(
             if existing and (existing["scope_ref"], existing["decision"], existing["authority_ref"], existing["artifact_sha256"]) != values:
                 raise StateError("APPROVAL_CONFLICT")
             if not existing:
+                approved_at = utc_now()
+                approval_digest = sha256_bytes(canonical_bytes({
+                    "run_id": current["run_id"], "approval_id": request["approval_id"],
+                    "scope_ref": request["scope_ref"], "decision": request["decision"],
+                    "authority_ref": request["authority_ref"], "artifact_sha256": request["artifact_sha256"],
+                    "actor": request["actor"], "host_identity": current_host_identity(),
+                    "approved_at": approved_at,
+                }))
                 conn.execute("INSERT INTO approvals VALUES(?,?,?,?,?,?)", (current["run_id"], request["approval_id"], *values))
+                conn.execute(
+                    "INSERT INTO approval_attestations VALUES(?,?,?,?,?,?)",
+                    (current["run_id"], request["approval_id"], request["actor"], current_host_identity(), approved_at, approval_digest),
+                )
         elif kind == "budget-use":
             budget = conn.execute("SELECT * FROM budgets WHERE run_id=? AND budget_id=?", (current["run_id"], request["budget_id"])).fetchone()
             if not budget or budget["used"] + request["amount"] > budget["limit_value"]:
@@ -498,6 +591,14 @@ def _record_control(
                 request["artifact_ref"], request["artifact_sha256"], "check_evidence",
                 Path(current["repository_path"]), Path(__file__).resolve().parents[1], policy, conn,
             )
+            if verified.source_type != "ledger" or not verified.content_json:
+                raise StateError("CHECK_RECEIPT_REQUIRED")
+            try:
+                receipt = json.loads(verified.content_json)
+            except json.JSONDecodeError:
+                raise StateError("CHECK_RECEIPT_REQUIRED")
+            expected_check = configured_check(policy, request["check_id"])
+            validate_check_receipt(receipt, current["run_id"], request["check_id"], expected_check, Path(current["repository_path"]))
             persist_artifact(conn, current["run_id"], verified)
             existing = conn.execute("SELECT * FROM check_evidence WHERE run_id=? AND check_id=?", (current["run_id"], request["check_id"])).fetchone()
             values = (request["outcome"], verified.ref, verified.sha256)
@@ -514,6 +615,45 @@ def command_record(args: argparse.Namespace, connection: sqlite3.Connection, run
     if args.record_kind == "branch-result":
         return _record_branch_result(args, connection, run, policy, task, store)
     return _record_control(args, connection, run, policy, task, store)
+
+
+def command_check_run(
+    args: argparse.Namespace, connection: sqlite3.Connection, run: sqlite3.Row,
+    policy: Mapping[str, Any], task: Mapping[str, Any], store: StateStore,
+) -> Dict[str, Any]:
+    check_id = opaque(args.check_id, "check_id")
+    if check_id not in task["required_check_ids"]:
+        raise StateError("UNKNOWN_CHECK")
+    configured = configured_check(policy, check_id)
+    command_id = opaque(configured["command_id"], "command_id")
+    argv = list(configured["argv"])
+    request = {"command": "check.run", "check_id": check_id, "command_id": command_id, "argv": argv}
+
+    def action(conn: sqlite3.Connection, current: sqlite3.Row, revision: int) -> Dict[str, Any]:
+        existing = conn.execute(
+            "SELECT 1 FROM check_evidence WHERE run_id=? AND check_id=?",
+            (current["run_id"], check_id),
+        ).fetchone()
+        if existing:
+            raise StateError("EVIDENCE_CONFLICT")
+        receipt = run_check(
+            Path(current["repository_path"]), current["run_id"], check_id, command_id, argv,
+            int(configured.get("timeout_seconds", 300)),
+        )
+        validate_check_receipt(receipt, current["run_id"], check_id, configured, Path(current["repository_path"]))
+        artifact = canonical_ledger_artifact("check-" + check_id + "-" + opaque(args.op_id, "op_id"), "check_evidence", receipt)
+        enforce_artifact_size(artifact.kind, artifact.size_bytes, policy)
+        persist_artifact(conn, current["run_id"], artifact)
+        conn.execute(
+            "INSERT INTO check_evidence VALUES(?,?,?,?,?)",
+            (current["run_id"], check_id, receipt["outcome"], artifact.ref, artifact.sha256),
+        )
+        return {
+            "code": "CHECK_RECORDED", "check_id": check_id, "outcome": receipt["outcome"],
+            "artifact_ref": artifact.ref, "artifact_sha256": artifact.sha256,
+        }
+
+    return store.mutate(connection, run["run_id"], opaque(args.op_id, "op_id"), request, action)
 
 
 def _ready_envelopes(connection: sqlite3.Connection, run: Mapping[str, Any]) -> List[Dict[str, Any]]:
@@ -550,8 +690,14 @@ def command_next(
         env = json.loads(row["envelope_json"])
         env["status"] = "running"
         env["started_at"] = utc_now()
+        env["attempt_id"] = "attempt-" + secrets.token_hex(12)
+        claim_token = secrets.token_urlsafe(32)
+        env["claim_digest"] = _claim_token_digest(claim_token)
+        env["lease_expires_at"] = utc_after(branch_lease_seconds(policy))
         conn.execute("UPDATE nodes SET status='running',started_at=?,envelope_json=? WHERE branch_id=?", (env["started_at"], json.dumps(env, sort_keys=True), row["branch_id"]))
-        return {"code": "CLAIMED", "branch": env}
+        dispatch = dict(env)
+        dispatch["claim_token"] = claim_token
+        return {"code": "CLAIMED", "branch": dispatch}
 
     return store.mutate(connection, run["run_id"], op_id, request, action)
 
@@ -709,15 +855,29 @@ def _next_action(connection: sqlite3.Connection, run: Mapping[str, Any]) -> Dict
             ready_join.append(join["join_id"])
     if ready_join:
         return {"kind": "advance_join", "join_id": ready_join[0]}
-    running = connection.execute("SELECT branch_id FROM nodes WHERE run_id=? AND status='running' ORDER BY branch_id", (run["run_id"],)).fetchall()
-    return {"kind": "await_result", "branch_ids": [row["branch_id"] for row in running]}
+    running = connection.execute("SELECT branch_id,envelope_json FROM nodes WHERE run_id=? AND status='running' ORDER BY branch_id", (run["run_id"],)).fetchall()
+    expired = [
+        (row["branch_id"], json.loads(row["envelope_json"]))
+        for row in running
+        if _lease_expired(json.loads(row["envelope_json"]).get("lease_expires_at"))
+    ]
+    if expired:
+        branch_id, env = expired[0]
+        return {"kind": "timeout_expired", "branch_id": branch_id, "attempt_id": env.get("attempt_id")}
+    return {
+        "kind": "await_result", "branch_ids": [row["branch_id"] for row in running],
+        "leases": [
+            {"branch_id": row["branch_id"], "lease_expires_at": json.loads(row["envelope_json"]).get("lease_expires_at")}
+            for row in running
+        ],
+    }
 
 
 def command_status(connection: sqlite3.Connection, run: sqlite3.Row) -> Dict[str, Any]:
-    branches = connection.execute("SELECT branch_id,node_key,role,generation,status,retry_count,max_retries FROM nodes WHERE run_id=? ORDER BY branch_id", (run["run_id"],)).fetchall()
+    branches = connection.execute("SELECT branch_id,node_key,role,generation,status,retry_count,max_retries,envelope_json FROM nodes WHERE run_id=? ORDER BY branch_id", (run["run_id"],)).fetchall()
     joins = connection.execute("SELECT join_id,join_key,kind,generation,status,degraded FROM joins WHERE run_id=? ORDER BY join_id", (run["run_id"],)).fetchall()
     budgets = connection.execute("SELECT budget_id,limit_value,used FROM budgets WHERE run_id=? ORDER BY budget_id", (run["run_id"],)).fetchall()
-    approvals = connection.execute("SELECT approval_id,scope_ref,decision,authority_ref,artifact_sha256 FROM approvals WHERE run_id=? ORDER BY approval_id", (run["run_id"],)).fetchall()
+    approvals = connection.execute("SELECT a.approval_id,a.scope_ref,a.decision,a.authority_ref,a.artifact_sha256,aa.actor,aa.approved_at FROM approvals a JOIN approval_attestations aa ON aa.run_id=a.run_id AND aa.approval_id=a.approval_id WHERE a.run_id=? ORDER BY a.approval_id", (run["run_id"],)).fetchall()
     acceptance = connection.execute("SELECT criterion_id,artifact_ref,artifact_sha256 FROM acceptance_evidence WHERE run_id=? ORDER BY criterion_id", (run["run_id"],)).fetchall()
     checks = connection.execute("SELECT check_id,outcome,artifact_ref,artifact_sha256 FROM check_evidence WHERE run_id=? ORDER BY check_id", (run["run_id"],)).fetchall()
     return _json_result(
@@ -732,14 +892,23 @@ def command_status(connection: sqlite3.Connection, run: sqlite3.Row) -> Dict[str
             "degraded_permissions": bool(run["degraded_permissions_ack"]),
             "degraded_durability": bool(run["degraded_durability_ack"]),
         },
-        branches=[dict(row) for row in branches], joins=[dict(row) for row in joins],
+        branches=[
+            {
+                "branch_id": row["branch_id"], "node_key": row["node_key"], "role": row["role"],
+                "generation": row["generation"], "status": row["status"],
+                "retry_count": row["retry_count"], "max_retries": row["max_retries"],
+                "attempt_id": json.loads(row["envelope_json"]).get("attempt_id"),
+                "lease_expires_at": json.loads(row["envelope_json"]).get("lease_expires_at"),
+            }
+            for row in branches
+        ], joins=[dict(row) for row in joins],
         budgets=[dict(row) for row in budgets], approvals=[dict(row) for row in approvals],
         acceptance_evidence=[dict(row) for row in acceptance], check_evidence=[dict(row) for row in checks],
         next_action=_next_action(connection, run), blocked_reason=run["blocked_reason"],
     )
 
 
-def command_complete(args: argparse.Namespace, connection: sqlite3.Connection, run: sqlite3.Row, task: Mapping[str, Any], store: StateStore) -> Dict[str, Any]:
+def command_complete(args: argparse.Namespace, connection: sqlite3.Connection, run: sqlite3.Row, policy: Mapping[str, Any], task: Mapping[str, Any], store: StateStore) -> Dict[str, Any]:
     request = {"command": "complete"}
 
     def action(conn: sqlite3.Connection, current: sqlite3.Row, revision: int) -> Dict[str, Any]:
@@ -752,7 +921,19 @@ def command_complete(args: argparse.Namespace, connection: sqlite3.Connection, r
         evidenced = {row[0] for row in conn.execute("SELECT criterion_id FROM acceptance_evidence WHERE run_id=?", (current["run_id"],))}
         if criteria != evidenced:
             raise StateError("ACCEPTANCE_EVIDENCE_INCOMPLETE")
-        passed = {row[0] for row in conn.execute("SELECT check_id FROM check_evidence WHERE run_id=? AND outcome='PASS'", (current["run_id"],))}
+        passed = set()
+        for check in conn.execute("SELECT * FROM check_evidence WHERE run_id=?", (current["run_id"],)):
+            artifact = conn.execute("SELECT * FROM artifacts WHERE ref=?", (check["artifact_ref"],)).fetchone()
+            if artifact is None or artifact["source_type"] != "ledger" or not artifact["content_json"]:
+                continue
+            try:
+                receipt = json.loads(artifact["content_json"])
+                configured = configured_check(policy, check["check_id"])
+                validate_check_receipt(receipt, current["run_id"], check["check_id"], configured, Path(current["repository_path"]))
+            except (StateError, ContractError, json.JSONDecodeError):
+                continue
+            if check["outcome"] == "PASS" and receipt["outcome"] == "PASS":
+                passed.add(check["check_id"])
         if not set(task["required_check_ids"]).issubset(passed):
             raise StateError("REQUIRED_CHECKS_INCOMPLETE")
         rejected = conn.execute("SELECT 1 FROM approvals WHERE run_id=? AND decision='REJECT'", (current["run_id"],)).fetchone()
@@ -770,7 +951,7 @@ def command_complete(args: argparse.Namespace, connection: sqlite3.Connection, r
 
 def command_run_control(args: argparse.Namespace, connection: sqlite3.Connection, run: sqlite3.Row, policy: Mapping[str, Any], task: Mapping[str, Any], store: StateStore) -> Dict[str, Any]:
     if args.command == "complete":
-        return command_complete(args, connection, run, task, store)
+        return command_complete(args, connection, run, policy, task, store)
     if args.command == "resume":
         if run["permission_verification"] == "DEGRADED_PERMISSION_VERIFICATION" and not args.ack_degraded_permissions:
             raise StateError("DEGRADED_PERMISSION_ACK_REQUIRED")
@@ -836,14 +1017,19 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--ack-degraded-durability", action="store_true", default=argparse.SUPPRESS)
     record = commands.add_parser("record")
     records = record.add_subparsers(dest="record_kind", required=True)
-    branch = records.add_parser("branch-result"); branch.add_argument("--run-id", required=True); branch.add_argument("--branch-id", required=True); branch.add_argument("--result-manifest", required=True); branch.add_argument("--op-id", required=True)
+    branch = records.add_parser("branch-result"); branch.add_argument("--run-id", required=True); branch.add_argument("--branch-id", required=True); branch.add_argument("--attempt-id", required=True); branch.add_argument("--claim-token", required=True); branch.add_argument("--result-manifest", required=True); branch.add_argument("--op-id", required=True)
     for name in ("timeout", "skip"):
         sub = records.add_parser(name); sub.add_argument("--run-id", required=True); sub.add_argument("--branch-id", required=True); sub.add_argument("--reason-code", required=True); sub.add_argument("--evidence-manifest", required=True); sub.add_argument("--op-id", required=True)
+        if name == "timeout":
+            sub.add_argument("--attempt-id", required=True); sub.add_argument("--claim-token", required=True)
     retry = records.add_parser("retry"); retry.add_argument("--run-id", required=True); retry.add_argument("--branch-id", required=True); retry.add_argument("--reason-code", required=True); retry.add_argument("--op-id", required=True)
-    approval = records.add_parser("approval"); approval.add_argument("--run-id", required=True); approval.add_argument("--approval-id", required=True); approval.add_argument("--scope-ref", required=True); approval.add_argument("--decision", choices=["APPROVE", "REJECT"], required=True); approval.add_argument("--authority-ref", required=True); approval.add_argument("--artifact-sha256", required=True); approval.add_argument("--op-id", required=True)
+    heartbeat = records.add_parser("heartbeat"); heartbeat.add_argument("--run-id", required=True); heartbeat.add_argument("--branch-id", required=True); heartbeat.add_argument("--attempt-id", required=True); heartbeat.add_argument("--claim-token", required=True); heartbeat.add_argument("--op-id", required=True)
+    approval = records.add_parser("approval"); approval.add_argument("--run-id", required=True); approval.add_argument("--approval-id", required=True); approval.add_argument("--scope-ref", required=True); approval.add_argument("--decision", choices=["APPROVE", "REJECT"], required=True); approval.add_argument("--authority-ref", required=True); approval.add_argument("--artifact-sha256", required=True); approval.add_argument("--actor"); approval.add_argument("--op-id", required=True)
     budget = records.add_parser("budget-use"); budget.add_argument("--run-id", required=True); budget.add_argument("--budget-id", required=True); budget.add_argument("--amount", type=int, required=True); budget.add_argument("--source-branch-id", required=True); budget.add_argument("--op-id", required=True)
     acceptance = records.add_parser("acceptance-evidence"); acceptance.add_argument("--run-id", required=True); acceptance.add_argument("--criterion-id", required=True); acceptance.add_argument("--artifact-ref", required=True); acceptance.add_argument("--artifact-sha256", required=True); acceptance.add_argument("--op-id", required=True)
     check = records.add_parser("check-evidence"); check.add_argument("--run-id", required=True); check.add_argument("--check-id", required=True); check.add_argument("--outcome", choices=["PASS", "FAIL", "NOT_RUN"], required=True); check.add_argument("--artifact-ref", required=True); check.add_argument("--artifact-sha256", required=True); check.add_argument("--op-id", required=True)
+    check_command = commands.add_parser("check"); check_commands = check_command.add_subparsers(dest="check_kind", required=True)
+    check_run = check_commands.add_parser("run"); check_run.add_argument("--run-id", required=True); check_run.add_argument("--check-id", required=True); check_run.add_argument("--op-id", required=True)
     for name in ("next", "ready"):
         sub = commands.add_parser(name); sub.add_argument("--run-id", required=True); sub.add_argument("--all", action="store_true"); sub.add_argument("--claim", action="store_true"); sub.add_argument("--op-id")
     join = commands.add_parser("join"); joins = join.add_subparsers(dest="join_kind", required=True)
@@ -874,7 +1060,7 @@ def execute(argv: Optional[Sequence[str]] = None, store: Optional[StateStore] = 
             conn, current, repo, policy_snapshot.digest, policy, skill_root
         )
         is_mutation = (
-            args.command in {"record", "complete", "block", "abort"}
+            args.command in {"record", "complete", "block", "abort", "check"}
             or (args.command in {"next", "ready"} and args.claim)
             or (args.command == "join" and args.join_kind == "advance")
         )
@@ -882,6 +1068,8 @@ def execute(argv: Optional[Sequence[str]] = None, store: Optional[StateStore] = 
             verify_semantic_state(connection, run, repo, policy_snapshot.digest, policy, skill_root)
         if args.command == "record":
             result = command_record(args, connection, run, stored_policy, task, state)
+        elif args.command == "check":
+            result = command_check_run(args, connection, run, stored_policy, task, state)
         elif args.command in {"next", "ready"}:
             if args.command == "ready":
                 args.all = True; args.claim = False

@@ -2,12 +2,14 @@
 
 import json
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Sequence, Tuple
 
 from . import STATE_SCHEMA_VERSION
+from .checks import configured_check, validate_check_receipt
 from .contracts import (
-    ContractError, authoritative_task_subset, safe_json_snapshot, validate_impact_map,
+    ContractError, authoritative_task_subset, digest, opaque, safe_json_snapshot, validate_impact_map,
     validate_result_manifest, validate_task_brief,
 )
 from .config import engine_version_compatible
@@ -253,15 +255,37 @@ def _validate_nodes(connection: sqlite3.Connection, run: Mapping[str, Any], task
             run["run_id"], run["policy_digest"], policy, task, spec, node["status"],
             stored_envelope.get("inputs", []), node["retry_count"],
         )
+        for runtime_key in ("attempt_id", "claim_digest", "lease_expires_at"):
+            expected_envelope[runtime_key] = stored_envelope.get(runtime_key)
         immutable_keys = {
             "schema_version", "run_id", "branch_id", "node_instance_id", "node_key", "role",
             "mandatory", "generation", "inputs", "effect_capabilities", "output_contract",
             "stopping_condition", "retry_count", "max_retries",
+            "attempt_id", "claim_digest", "lease_expires_at",
         }
         if set(stored_envelope) != set(expected_envelope) or any(stored_envelope[key] != expected_envelope[key] for key in immutable_keys):
             raise StateError("ENVELOPE_INVALID")
         if stored_envelope["status"] != node["status"] or stored_envelope["failure_code"] != node["failure_code"]:
             raise StateError("ENVELOPE_STATE_INVALID")
+        if node["status"] == "running":
+            if not isinstance(stored_envelope.get("attempt_id"), str) or not stored_envelope.get("attempt_id") or not isinstance(stored_envelope.get("claim_digest"), str) or len(stored_envelope["claim_digest"]) != 64 or not stored_envelope.get("lease_expires_at"):
+                raise StateError("ATTEMPT_STATE_INVALID")
+            try:
+                opaque(stored_envelope["attempt_id"], "attempt_id")
+                digest(stored_envelope["claim_digest"], "claim_digest")
+                datetime.fromisoformat(stored_envelope["lease_expires_at"].replace("Z", "+00:00"))
+            except (ContractError, AttributeError, TypeError, ValueError):
+                raise StateError("ATTEMPT_STATE_INVALID")
+        elif node["status"] in {"succeeded", "failed", "timed_out"}:
+            if not isinstance(stored_envelope.get("attempt_id"), str) or not stored_envelope.get("attempt_id") or not isinstance(stored_envelope.get("claim_digest"), str) or len(stored_envelope["claim_digest"]) != 64:
+                raise StateError("ATTEMPT_STATE_INVALID")
+            try:
+                opaque(stored_envelope["attempt_id"], "attempt_id")
+                digest(stored_envelope["claim_digest"], "claim_digest")
+            except ContractError:
+                raise StateError("ATTEMPT_STATE_INVALID")
+        elif any(stored_envelope.get(key) is not None for key in ("attempt_id", "claim_digest", "lease_expires_at")):
+            raise StateError("ATTEMPT_STATE_INVALID")
         for input_item in stored_envelope["inputs"]:
             allowed_input_keys = {"kind", "ref", "sha256", "size_bytes", "content"}
             if (set(input_item) - allowed_input_keys or
@@ -308,7 +332,7 @@ def _validate_nodes(connection: sqlite3.Connection, run: Mapping[str, Any], task
                     if node["node_key"].startswith("supervisor_"):
                         consolidation_keys = {
                             "schema_version", "kind", "run_id", "join_id", "generation",
-                            "source_branch_ids", "finding_dispositions", "outcome",
+                            "source_branch_ids", "finding_dispositions", "outcome", "attempt_id", "claim_digest",
                         }
                         validate_result_manifest(
                             {key: result[key] for key in consolidation_keys if key in result}, branch_contract
@@ -339,6 +363,8 @@ def _validate_nodes(connection: sqlite3.Connection, run: Mapping[str, Any], task
                     raise StateError("TERMINAL_RESULT_INVALID")
                 if node["status"] != "succeeded" and artifact["kind"] != expected_wrapper_kind:
                     raise StateError("TERMINAL_RESULT_INVALID")
+            if result.get("attempt_id") != stored_envelope.get("attempt_id") or result.get("claim_digest") != stored_envelope.get("claim_digest"):
+                raise StateError("ATTEMPT_STATE_INVALID")
 
 
 def _expected_join_node_keys(join: Mapping[str, Any], run: Mapping[str, Any], policy: Mapping[str, Any]) -> set:
@@ -609,11 +635,39 @@ def _verify_semantic_state(
             artifact = connection.execute("SELECT * FROM artifacts WHERE ref=?", (row["artifact_ref"],)).fetchone()
             if row[id_column] not in valid_ids or artifact is None or artifact["kind"] != kind or artifact["sha256"] != row["artifact_sha256"]:
                 raise StateError("EVIDENCE_STATE_INVALID")
+            if table == "check_evidence":
+                if artifact["source_type"] != "ledger" or not artifact["content_json"]:
+                    raise StateError("CHECK_EVIDENCE_PROVENANCE_INVALID")
+                try:
+                    receipt = json.loads(artifact["content_json"])
+                    validate_check_receipt(
+                        receipt, run["run_id"], row["check_id"],
+                        configured_check(policy, row["check_id"]), Path(run["repository_path"]),
+                    )
+                except (ContractError, StateError, json.JSONDecodeError):
+                    raise StateError("CHECK_EVIDENCE_PROVENANCE_INVALID")
+                if row["outcome"] != receipt["outcome"]:
+                    raise StateError("CHECK_EVIDENCE_PROVENANCE_INVALID")
     for row in connection.execute("SELECT * FROM approvals WHERE run_id=?", (run["run_id"],)):
         artifact = connection.execute("SELECT * FROM artifacts WHERE ref=?", (row["scope_ref"],)).fetchone()
         if (row["approval_id"] not in set(task["required_human_decisions"]) or row["decision"] not in {"APPROVE", "REJECT"}
                 or artifact is None or artifact["kind"] != "acceptance_evidence" or artifact["sha256"] != row["artifact_sha256"]):
             raise StateError("APPROVAL_STATE_INVALID")
+        attestation = connection.execute(
+            "SELECT * FROM approval_attestations WHERE run_id=? AND approval_id=?",
+            (run["run_id"], row["approval_id"]),
+        ).fetchone()
+        if attestation is None:
+            raise StateError("APPROVAL_ATTESTATION_INVALID")
+        expected_digest = sha256_bytes(canonical_bytes({
+            "run_id": run["run_id"], "approval_id": row["approval_id"],
+            "scope_ref": row["scope_ref"], "decision": row["decision"],
+            "authority_ref": row["authority_ref"], "artifact_sha256": row["artifact_sha256"],
+            "actor": attestation["actor"], "host_identity": attestation["host_identity"],
+            "approved_at": attestation["approved_at"],
+        }))
+        if attestation["host_identity"] != current_host_identity() or not attestation["actor"] or attestation["approval_digest"] != expected_digest:
+            raise StateError("APPROVAL_ATTESTATION_INVALID")
     artifacts = connection.execute("SELECT * FROM artifacts WHERE run_id=?", (run["run_id"],)).fetchall()
     if not artifacts or connection.execute("SELECT 1 FROM artifacts WHERE ref=?", (run["task_ref"],)).fetchone() is None:
         raise StateError("ARTIFACT_REGISTRY_INVALID")

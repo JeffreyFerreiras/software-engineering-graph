@@ -9,7 +9,7 @@ import sqlite3
 import stat
 import tempfile
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple
 
@@ -77,6 +77,12 @@ CREATE TABLE approvals (
   decision TEXT NOT NULL, authority_ref TEXT NOT NULL, artifact_sha256 TEXT NOT NULL,
   PRIMARY KEY(run_id,approval_id)
 );
+CREATE TABLE approval_attestations (
+  run_id TEXT NOT NULL REFERENCES runs(run_id), approval_id TEXT NOT NULL,
+  actor TEXT NOT NULL, host_identity TEXT NOT NULL, approved_at TEXT NOT NULL,
+  approval_digest TEXT NOT NULL, PRIMARY KEY(run_id,approval_id),
+  FOREIGN KEY(run_id,approval_id) REFERENCES approvals(run_id,approval_id)
+);
 CREATE TABLE acceptance_evidence (
   run_id TEXT NOT NULL REFERENCES runs(run_id), criterion_id TEXT NOT NULL, artifact_ref TEXT NOT NULL,
   artifact_sha256 TEXT NOT NULL, PRIMARY KEY(run_id,criterion_id)
@@ -104,9 +110,11 @@ MUTATION_RUN_STATES = {
     "record.skip": {"active"},
     "record.retry": {"initialized", "active"},
     "record.approval": {"initialized", "active"},
+    "record.heartbeat": {"initialized", "active"},
     "record.budget-use": {"initialized", "active"},
     "record.acceptance-evidence": {"active"},
     "record.check-evidence": {"active"},
+    "check.run": {"active"},
     "join.advance": {"active"},
     "complete": {"active"},
     "block": {"initialized", "active"},
@@ -122,6 +130,14 @@ class StateError(RuntimeError):
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def utc_after(seconds: int) -> str:
+    return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def current_actor() -> str:
+    return getpass.getuser() or "unknown-user"
 
 
 def installed_codex_home() -> Path:

@@ -3,7 +3,7 @@
   "$id": "urn:codex:engineering-graph:branch-envelope:v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "run_id", "branch_id", "node_instance_id", "node_key", "role", "mandatory", "generation", "status", "inputs", "effect_capabilities", "output_contract", "stopping_condition", "artifact_ref", "evidence", "decision", "retry_count", "max_retries", "failure_code", "started_at", "finished_at"],
+  "required": ["schema_version", "run_id", "branch_id", "node_instance_id", "node_key", "role", "mandatory", "generation", "status", "inputs", "effect_capabilities", "output_contract", "stopping_condition", "artifact_ref", "evidence", "decision", "retry_count", "max_retries", "attempt_id", "claim_digest", "lease_expires_at", "failure_code", "started_at", "finished_at"],
   "properties": {
     "schema_version": {"const": 1},
     "run_id": {"$ref": "#/$defs/id"},
@@ -23,6 +23,10 @@
     "decision": {"type": ["string", "null"]},
     "retry_count": {"type": "integer", "minimum": 0},
     "max_retries": {"type": "integer", "minimum": 0},
+    "attempt_id": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/id"}]},
+    "claim_digest": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/digest"}]},
+    "claim_token": {"anyOf": [{"type": "null"}, {"type": "string", "minLength": 1}]},
+    "lease_expires_at": {"type": ["string", "null"]},
     "failure_code": {"type": ["string", "null"]},
     "started_at": {"type": ["string", "null"]},
     "finished_at": {"type": ["string", "null"]}

@@ -85,6 +85,9 @@ ENGINE_REQUIRED_CHECKS = {
     "repo-check": {"command_id": "npm-run-check", "mandatory": True},
 }
 
+ENGINE_DEFAULT_BRANCH_LEASE_SECONDS = 900
+ENGINE_MAX_BRANCH_LEASE_SECONDS = 3600
+
 ENGINE_SPECIALISTS = {
     "audio_realtime_translation": ("audio_realtime_specialist", "audio_realtime_specialist"),
     "ios_webkit_native": ("ios_platform_specialist", "ios_platform_specialist"),
@@ -253,7 +256,15 @@ def load_policy(repo: Path) -> Tuple[Dict[str, Any], Snapshot]:
     limits = value["limits"]
     if not isinstance(limits, dict):
         raise ContractError("limits", "INVALID_OBJECT")
-    require_keys(limits, {"design_revisions", "delivery_repairs", "inspection", "manifest_bytes", "artifact_bytes"}, {"design_revisions", "delivery_repairs", "inspection", "manifest_bytes", "artifact_bytes"}, "limits")
+    require_keys(
+        limits,
+        {"design_revisions", "delivery_repairs", "inspection", "manifest_bytes", "artifact_bytes"},
+        {"design_revisions", "delivery_repairs", "inspection", "manifest_bytes", "artifact_bytes", "branch_lease_seconds"},
+        "limits",
+    )
+    if "branch_lease_seconds" in limits:
+        if isinstance(limits["branch_lease_seconds"], bool) or not isinstance(limits["branch_lease_seconds"], int) or not 30 <= limits["branch_lease_seconds"] <= ENGINE_MAX_BRANCH_LEASE_SECONDS:
+            raise ContractError("limits.branch_lease_seconds", "INVALID_LEASE")
     if isinstance(limits["design_revisions"], bool) or not isinstance(limits["design_revisions"], int) or not 0 <= limits["design_revisions"] <= 3:
         raise ContractError("limits.design_revisions", "LIMIT_MAY_NOT_INCREASE")
     if isinstance(limits["delivery_repairs"], bool) or not isinstance(limits["delivery_repairs"], int) or not 0 <= limits["delivery_repairs"] <= 3:
@@ -285,17 +296,32 @@ def load_policy(repo: Path) -> Tuple[Dict[str, Any], Snapshot]:
         if not isinstance(config["max_bytes"], int) or not 1 <= config["max_bytes"] <= ceiling:
             raise ContractError("artifact_kinds." + kind, "LIMIT_MAY_NOT_INCREASE")
     checks = value["required_checks"]
-    if checks != ENGINE_REQUIRED_CHECKS:
+    if not isinstance(checks, dict) or not set(ENGINE_REQUIRED_CHECKS).issubset(checks):
         raise ContractError("required_checks", "ENGINE_COMMAND_SET_CHANGED")
     command_ids: Set[str] = set()
     for check_id, check in checks.items():
         opaque(check_id, "required_checks")
         if not isinstance(check, dict):
             raise ContractError("required_checks." + check_id, "INVALID_OBJECT")
-        require_keys(check, {"command_id", "mandatory"}, {"command_id", "mandatory"}, "required_checks." + check_id)
+        require_keys(
+            check,
+            {"command_id", "mandatory"},
+            {"command_id", "mandatory", "argv", "timeout_seconds"},
+            "required_checks." + check_id,
+        )
         command_id = opaque(check["command_id"], "required_checks.command_id")
+        if check_id in ENGINE_REQUIRED_CHECKS and command_id != ENGINE_REQUIRED_CHECKS[check_id]["command_id"]:
+            raise ContractError("required_checks." + check_id, "ENGINE_COMMAND_SET_CHANGED")
         if command_id in command_ids or check["mandatory"] is not True:
             raise ContractError("required_checks", "INVALID_OR_DUPLICATE")
+        if "argv" in check:
+            argv = check["argv"]
+            if not isinstance(argv, list) or not argv or len(argv) > 32 or any(not isinstance(item, str) or not item or len(item) > 1024 for item in argv):
+                raise ContractError("required_checks." + check_id + ".argv", "INVALID_COMMAND")
+        if "timeout_seconds" in check:
+            timeout = check["timeout_seconds"]
+            if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 3600:
+                raise ContractError("required_checks." + check_id + ".timeout_seconds", "INVALID_TIMEOUT")
         command_ids.add(command_id)
     capabilities = value["role_capabilities"]
     if not isinstance(capabilities, dict) or set(capabilities) != set(ENGINE_ROLE_CAPABILITIES):
@@ -313,3 +339,7 @@ def load_policy(repo: Path) -> Tuple[Dict[str, Any], Snapshot]:
         if not isinstance(pattern, str) or not pattern or len(pattern) > 256:
             raise ContractError("denied_patterns", "INVALID_PATTERN")
     return value, snapshot
+
+
+def branch_lease_seconds(policy: Mapping[str, Any]) -> int:
+    return int(policy.get("limits", {}).get("branch_lease_seconds", ENGINE_DEFAULT_BRANCH_LEASE_SECONDS))

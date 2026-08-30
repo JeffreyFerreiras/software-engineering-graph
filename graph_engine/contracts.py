@@ -275,6 +275,11 @@ def _unique_strings(values: Any, field: str, allowed: Optional[Set[str]] = None)
     return sorted(result)
 
 
+def _validate_attempt(value: Mapping[str, Any], field: str) -> None:
+    opaque(value.get("attempt_id"), field + ".attempt_id")
+    digest(value.get("claim_digest"), field + ".claim_digest")
+
+
 def validate_task_brief(value: Any, policy_digest: str, policy: Mapping[str, Any]) -> Dict[str, Any]:
     if not isinstance(value, dict):
         raise ContractError("task_brief", "INVALID_OBJECT")
@@ -319,6 +324,11 @@ def validate_task_brief(value: Any, policy_digest: str, policy: Mapping[str, Any
         raise ContractError("acceptance_criteria", "DUPLICATE_ID")
     if value["risk_level"] not in {"low", "medium", "high", "critical"}:
         raise ContractError("risk_level", "UNKNOWN_VALUE")
+    if value["risk_level"] == "critical" and mode == "delivery":
+        if minimum != "full_delivery":
+            raise ContractError("minimum_route", "CRITICAL_REQUIRES_FULL_DELIVERY")
+        if "security_privacy" not in tags:
+            raise ContractError("mandatory_impact_tags", "CRITICAL_REQUIRES_SECURITY_REVIEW")
     authority = value["authority"]
     if not isinstance(authority, dict):
         raise ContractError("authority", "INVALID_OBJECT")
@@ -402,8 +412,9 @@ def authoritative_task_subset(value: Mapping[str, Any]) -> Dict[str, Any]:
 def validate_impact_map(value: Any, task: Mapping[str, Any], policy: Mapping[str, Any]) -> Dict[str, Any]:
     if not isinstance(value, dict):
         raise ContractError("impact_map", "INVALID_OBJECT")
-    allowed = {"schema_version", "task_id", "route_label", "impact_tags", "evidence_refs"}
+    allowed = {"schema_version", "task_id", "route_label", "impact_tags", "evidence_refs", "attempt_id", "claim_digest"}
     require_keys(value, allowed, allowed, "impact_map")
+    _validate_attempt(value, "impact_map")
     if value["schema_version"] != 1 or value["task_id"] != task["task_id"]:
         raise ContractError("impact_map", "TASK_OR_SCHEMA_MISMATCH")
     route = value["route_label"]
@@ -417,6 +428,11 @@ def validate_impact_map(value: Any, task: Mapping[str, Any], policy: Mapping[str
     tags = _unique_strings(value["impact_tags"], "impact_tags", set(policy["impact_tags"]))
     if not set(task["mandatory_impact_tags"]).issubset(tags):
         raise ContractError("impact_tags", "MANDATORY_TAG_REMOVED")
+    if task["request_mode"] == "delivery" and task["risk_level"] == "critical":
+        if route != "full_delivery":
+            raise ContractError("route_label", "CRITICAL_REQUIRES_FULL_DELIVERY")
+        if "security_privacy" not in tags:
+            raise ContractError("impact_tags", "CRITICAL_REQUIRES_SECURITY_REVIEW")
     if mode == "delivery" and route == "fast_path" and set(tags) & RISK_TAGS:
         raise ContractError("route_label", "FAST_PATH_INVARIANT")
     for ref in value["evidence_refs"]:
@@ -434,9 +450,10 @@ def validate_result_manifest(value: Any, branch: Mapping[str, Any]) -> Dict[str,
             raise ContractError("consolidation", "INVALID_OBJECT")
         allowed = {
             "schema_version", "kind", "run_id", "join_id", "generation",
-            "source_branch_ids", "finding_dispositions", "outcome",
+            "source_branch_ids", "finding_dispositions", "outcome", "attempt_id", "claim_digest",
         }
         require_keys(value, allowed, allowed, "consolidation")
+        _validate_attempt(value, "consolidation")
         if value["schema_version"] != 1 or value["run_id"] != branch["run_id"]:
             raise ContractError("consolidation", "RUN_OR_SCHEMA_MISMATCH")
         expected_kind = "design_consolidation" if branch["node_key"].startswith("supervisor_design") else "delivery_consolidation"
@@ -474,10 +491,11 @@ def validate_result_manifest(value: Any, branch: Mapping[str, Any]) -> Dict[str,
         "schema_version", "run_id", "branch_id", "status", "output_kind",
         "artifact_ref", "evidence", "decision", "findings", "failure_code",
         "kind", "join_id", "generation", "source_branch_ids", "finding_dispositions",
-        "outcome",
+        "outcome", "attempt_id", "claim_digest",
     }
-    required = {"schema_version", "run_id", "branch_id", "status", "output_kind", "evidence"}
+    required = {"schema_version", "run_id", "branch_id", "status", "output_kind", "evidence", "attempt_id", "claim_digest"}
     require_keys(value, required, allowed, "result")
+    _validate_attempt(value, "result")
     if value["schema_version"] != 1 or value["run_id"] != branch["run_id"] or value["branch_id"] != branch["branch_id"]:
         raise ContractError("result", "BRANCH_MISMATCH")
     if value["status"] not in {"succeeded", "failed"}:
