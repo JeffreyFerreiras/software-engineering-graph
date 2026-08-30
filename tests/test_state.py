@@ -314,14 +314,59 @@ class StateTests(GraphCase):
                 "record.approval", "record.budget-use", "record.acceptance-evidence",
                 "record.check-evidence", "join.advance", "complete", "block", "abort",
             ]
+            no_op_validator = lambda _connection, _run: None
             for index, command in enumerate(commands, 1):
                 op_id = "matrix-" + str(index)
-                first = self.store.mutate(connection, "RUN-1", op_id, {"command": command}, lambda _c, _r, _v, name=command: {"code": "RECORDED", "command": name})
+                first = self.store.mutate(
+                    connection, "RUN-1", op_id, {"command": command},
+                    lambda _c, _r, _v, name=command: {"code": "RECORDED", "command": name},
+                    semantic_validator=no_op_validator,
+                )
                 connection.execute("UPDATE runs SET status='complete' WHERE run_id='RUN-1'")
-                replay = self.store.mutate(connection, "RUN-1", op_id, {"command": command}, lambda *_args: self.fail("replay action executed"))
+                replay = self.store.mutate(
+                    connection, "RUN-1", op_id, {"command": command},
+                    lambda *_args: self.fail("replay action executed"),
+                    semantic_validator=lambda *_args: self.fail("replay validator executed"),
+                )
                 self.assertEqual(replay["code"], "REPLAYED")
                 self.assertEqual(replay["state_revision"], first["state_revision"])
                 connection.execute("UPDATE runs SET status='active' WHERE run_id='RUN-1'")
+
+    def test_mutation_validates_before_and_after_and_rolls_back_on_failure(self):
+        self.initialize()
+        database = self.store.db_path("albanian-live-translate", "RUN-1")
+        observations = []
+
+        def semantic_validator(_connection, run):
+            observations.append((run["state_revision"], run["blocked_reason"]))
+            if len(observations) == 2:
+                raise StateError("POST_ACTION_INVALID")
+
+        def action(connection, _run, _revision):
+            connection.execute("UPDATE runs SET blocked_reason='temporary' WHERE run_id='RUN-1'")
+            return {"code": "RECORDED"}
+
+        with self.store.connect(database) as connection:
+            original_revision = connection.execute(
+                "SELECT state_revision FROM runs WHERE run_id='RUN-1'"
+            ).fetchone()[0]
+            with self.assertRaisesRegex(StateError, "POST_ACTION_INVALID"):
+                self.store.mutate(
+                    connection, "RUN-1", "rollback-validation", {"command": "next.claim"},
+                    action, semantic_validator=semantic_validator,
+                )
+            run = connection.execute("SELECT * FROM runs WHERE run_id='RUN-1'").fetchone()
+            self.assertEqual(
+                observations,
+                [(original_revision, None), (original_revision + 1, "temporary")],
+            )
+            self.assertEqual((run["state_revision"], run["blocked_reason"]), (original_revision, None))
+            self.assertIsNone(connection.execute(
+                "SELECT 1 FROM operations WHERE operation_id='rollback-validation'"
+            ).fetchone())
+            self.assertIsNone(connection.execute(
+                "SELECT 1 FROM events WHERE source_id='rollback-validation'"
+            ).fetchone())
 
     def test_source_checkout_default_store_fails_closed_without_profile_fallback(self):
         with patch("graph_engine.state.Path.home", side_effect=AssertionError("real profile fallback")):

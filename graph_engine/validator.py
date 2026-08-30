@@ -176,7 +176,9 @@ def _validate_reconstructed_graph(connection: sqlite3.Connection, run: Mapping[s
             raise StateError("TOPOLOGY_JOIN_INVALID")
 
 
-def _validate_fanouts(connection: sqlite3.Connection, run: Mapping[str, Any]) -> None:
+def _validate_fanouts(
+    connection: sqlite3.Connection, run: Mapping[str, Any], *, case_sensitive: bool,
+) -> None:
     collection_sets: Dict[Tuple[str, int], List[str]] = {}
     for join in connection.execute(
         "SELECT * FROM joins WHERE run_id=? AND kind='collection'", (run["run_id"],)
@@ -216,7 +218,9 @@ def _validate_fanouts(connection: sqlite3.Connection, run: Mapping[str, Any]) ->
                 "schema_version", "kind", "run_id", "fanout_id", "members", "dependencies", "evidence"
             )}
             normalized = validate_fanout_assessment(submitted, run["run_id"], fanout["fanout_id"], member_ids)
-            dependencies = validate_fanout_ordering(normalized["members"], normalized["dependencies"])
+            dependencies = validate_fanout_ordering(
+                normalized["members"], normalized["dependencies"], case_sensitive=case_sensitive,
+            )
         except (KeyError, ValueError, ContractError, json.JSONDecodeError):
             raise StateError("FANOUT_ASSESSMENT_INVALID")
         if (content.get("authority_ref"), content.get("actor"), content.get("host_identity"), content.get("assessed_at")) != (
@@ -1074,6 +1078,8 @@ def _verify_semantic_state(
     current_policy_digest: str,
     policy: Mapping[str, Any],
     skill_root: Path,
+    *,
+    case_sensitive: bool,
 ) -> None:
     if run["state_schema_version"] != STATE_SCHEMA_VERSION:
         raise StateError("UNSUPPORTED_STATE_SCHEMA")
@@ -1113,7 +1119,7 @@ def _verify_semantic_state(
     _validate_joins(connection, run, policy)
     _validate_reconstructed_graph(connection, run)
     _validate_route_and_topology(connection, run, task, policy)
-    _validate_fanouts(connection, run)
+    _validate_fanouts(connection, run, case_sensitive=case_sensitive)
     _validate_attempts(connection, run)
     try:
         stored_policy = json.loads(run["policy_json"])
@@ -1183,9 +1189,14 @@ def verify_semantic_state(
     current_policy_digest: str,
     policy: Mapping[str, Any],
     skill_root: Path,
+    *,
+    case_sensitive: bool,
 ) -> None:
     try:
-        _verify_semantic_state(connection, run, repo, current_policy_digest, policy, skill_root)
+        _verify_semantic_state(
+            connection, run, repo, current_policy_digest, policy, skill_root,
+            case_sensitive=case_sensitive,
+        )
     except sqlite3.DatabaseError:
         raise StateError("DATABASE_STATE_INVALID")
 
@@ -1197,5 +1208,10 @@ def verify_resume(
     current_policy_digest: str,
     policy: Mapping[str, Any],
     skill_root: Path,
+    *,
+    case_sensitive: bool,
 ) -> None:
-    verify_semantic_state(connection, run, repo, current_policy_digest, policy, skill_root)
+    verify_semantic_state(
+        connection, run, repo, current_policy_digest, policy, skill_root,
+        case_sensitive=case_sensitive,
+    )

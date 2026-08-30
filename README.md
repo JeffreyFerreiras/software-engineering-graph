@@ -1,8 +1,8 @@
 # Software Engineering Graph
 
-This repository is the canonical source checkout for the Software Engineering Graph workflow and
-its seven reusable profile-agent definitions. The separate profile installation is not modified or
-managed by this repository.
+This repository is authoritative for the Software Engineering Graph workflow and its seven reusable
+profile-agent definitions. The installed profile remains untouched unless separately approved work
+explicitly changes it.
 
 ## Requirements
 
@@ -11,9 +11,9 @@ managed by this repository.
 
 ## Local validation
 
-Supported use from this checkout is limited to imports, tests, and displaying CLI help. Operational
-commands require a separate consumer repository with its own `.codex/engineering-graph.json` policy
-and may discover profile-local state.
+Operational commands act on an explicitly selected consumer repository with its own
+`.codex/engineering-graph.json` policy. Repository development and validation do not read, compare,
+install, or update profile files.
 
 This is intentionally a local workflow. It does not add CI or remote automation. Consumer policies
 may define each required check's `argv` and optional `timeout_seconds`; run those checks locally with
@@ -51,12 +51,10 @@ $env:PYTHONDONTWRITEBYTECODE = '1'
 python -m unittest -v tests.test_contracts tests.test_planner tests.test_validator tests.test_state tests.test_cli tests.test_graph_hardening
 ```
 
-After the Supervisor approves the final source digest, run hygiene separately and last against detached,
-approved source inputs:
+After the Supervisor approves the final review, run the local read-only hygiene check separately and
+last:
 
 ```powershell
 $env:PYTHONDONTWRITEBYTECODE = '1'
-$env:SEG_SOURCE_SKILL = '<absolute-path-to-approved-skill-source>'
-$env:SEG_SOURCE_AGENTS = '<absolute-path-to-approved-agent-source>'
 python -m unittest -v tests.test_standalone_acceptance.StandaloneAcceptanceTests.test_hygiene
 ```

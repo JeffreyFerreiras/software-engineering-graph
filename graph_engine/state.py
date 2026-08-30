@@ -23,6 +23,8 @@ UNSUPPORTED_POSIX_FILESYSTEMS = {
     "nfs", "nfs4", "smb3", "sshfs",
 }
 
+SemanticValidator = Callable[[sqlite3.Connection, sqlite3.Row], None]
+
 
 SCHEMA = """
 CREATE TABLE runs (
@@ -306,7 +308,6 @@ class StateStore:
     def __init__(self, codex_home: Optional[Path] = None, fault_hook: Optional[Callable[[str], None]] = None):
         self.codex_home = (codex_home or installed_codex_home()).absolute()
         self.fault_hook = fault_hook or (lambda _point: None)
-        self.semantic_validator: Optional[Callable[[sqlite3.Connection, sqlite3.Row], None]] = None
 
     def run_root(self, repository_id: str, run_id: str) -> Path:
         return self.codex_home / "graph-runs" / repository_digest(repository_id) / run_id
@@ -779,6 +780,8 @@ class StateStore:
         op_id: str,
         request: Mapping[str, Any],
         action: Callable[[sqlite3.Connection, sqlite3.Row, int], Dict[str, Any]],
+        *,
+        semantic_validator: SemanticValidator,
     ) -> Dict[str, Any]:
         request_digest = sha256_bytes(canonical_bytes(request))
         try:
@@ -810,8 +813,7 @@ class StateStore:
                 if status == "blocked":
                     raise StateError("GRAPH_BLOCKED")
                 raise StateError("INVALID_RUN_TRANSITION")
-            if self.semantic_validator is not None:
-                self.semantic_validator(connection, run)
+            semantic_validator(connection, run)
             revision = int(run["state_revision"]) + 1
             result = action(connection, run, revision)
             result.update({"schema_version": 1, "ok": True, "run_id": run_id, "state_revision": revision})
@@ -825,9 +827,8 @@ class StateStore:
                 "INSERT INTO events(run_id,revision,event_type,source_id,detail_json) VALUES(?,?,?,?,?)",
                 (run_id, revision, request["command"], op_id, json.dumps(request, sort_keys=True)),
             )
-            if self.semantic_validator is not None:
-                updated_run = connection.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
-                self.semantic_validator(connection, updated_run)
+            updated_run = connection.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+            semantic_validator(connection, updated_run)
             connection.commit()
             return result
         except Exception:

@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 import itertools
-import os
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from .ids import stable_id
@@ -65,11 +64,9 @@ def _paths_overlap(left: Mapping[str, Any], right: Mapping[str, Any], case_sensi
 
 def validate_fanout_ordering(
     members: Sequence[Mapping[str, Any]], dependencies: Sequence[Mapping[str, Any]],
-    case_sensitive: Optional[bool] = None,
+    *, case_sensitive: bool,
 ) -> List[Dict[str, str]]:
     """Validate that an assessed fixed fan-out is safe without scheduling arbitrary work."""
-    if case_sensitive is None:
-        case_sensitive = os.path.normcase("A") != os.path.normcase("a")
     member_ids = [member["branch_id"] for member in members]
     member_set = set(member_ids)
     if len(member_set) != len(member_ids):

@@ -50,21 +50,36 @@ class PlannerTests(GraphCase):
             self._member("C"),
         ]
         with self.assertRaisesRegex(ValueError, "FANOUT_UNORDERED_CONFLICT"):
-            validate_fanout_ordering(members, [])
+            validate_fanout_ordering(members, [], case_sensitive=True)
         dependencies = [
             {"before_branch_id": "A", "after_branch_id": "C", "reason": "first"},
             {"before_branch_id": "C", "after_branch_id": "B", "reason": "then"},
         ]
-        self.assertEqual(len(validate_fanout_ordering(members, dependencies)), 2)
+        self.assertEqual(
+            len(validate_fanout_ordering(members, dependencies, case_sensitive=True)), 2,
+        )
 
     def test_fanout_rejects_cycles_and_over_capacity_antichains(self):
         service = {"ref": "gpu", "units": 1, "capacity": 1}
         members = [self._member("A", services=[service]), self._member("B", services=[service])]
         with self.assertRaisesRegex(ValueError, "FANOUT_CAPACITY_EXCEEDED"):
-            validate_fanout_ordering(members, [])
+            validate_fanout_ordering(members, [], case_sensitive=True)
         ordered = [{"before_branch_id": "A", "after_branch_id": "B", "reason": "capacity"}]
-        validate_fanout_ordering(members, ordered)
+        validate_fanout_ordering(members, ordered, case_sensitive=True)
         with self.assertRaisesRegex(ValueError, "FANOUT_CYCLE"):
-            validate_fanout_ordering(members, ordered + [
-                {"before_branch_id": "B", "after_branch_id": "A", "reason": "cycle"}
-            ])
+            validate_fanout_ordering(
+                members,
+                ordered + [{"before_branch_id": "B", "after_branch_id": "A", "reason": "cycle"}],
+                case_sensitive=True,
+            )
+
+    def test_fanout_case_policy_is_explicit(self):
+        members = [
+            self._member("A", [{"path": "src/Feature.py", "scope": "exact"}]),
+            self._member("B", [{"path": "src/feature.py", "scope": "exact"}]),
+        ]
+        with self.assertRaisesRegex(ValueError, "FANOUT_UNORDERED_CONFLICT"):
+            validate_fanout_ordering(members, [], case_sensitive=False)
+        self.assertEqual(
+            validate_fanout_ordering(members, [], case_sensitive=True), [],
+        )
