@@ -1,6 +1,6 @@
 ---
 name: software-engineering-graph
-description: Orchestrate rigorous software application work through a scope-selected supervisor, tech lead, architect, senior engineer, code reviewer, and test engineer with bounded design and delivery loops. Use when a user requests graph engineering, a multi-agent software organization, technical-design approval, independent implementation review and testing, or when repository instructions require this workflow for non-trivial features, fixes, refactors, migrations, integrations, or production changes.
+description: Orchestrate rigorous software application work through a scope-selected supervisor, tech lead, architect, senior engineer, code reviewer, and test engineer with bounded design and delivery loops and human-approved model/effort plans. Use when a user requests graph engineering, a multi-agent software organization, technical-design approval, independent implementation review and testing, or when repository instructions require this workflow for non-trivial features, fixes, refactors, migrations, integrations, or production changes.
 ---
 
 # Software Engineering Graph
@@ -8,6 +8,10 @@ description: Orchestrate rigorous software application work through a scope-sele
 Use the local control ledger for every new graph run. Treat it as a deterministic coordination and
 recovery aid, not a security boundary or a model-agent executor. Keep the primary agent as Supervisor
 and the sole CLI mutator and dispatcher. Never give branch agents database paths or operation IDs.
+The first Supervisor step is an execution-plan preflight: T-shirt size the job as small, medium, or
+large, select only pertinent roles, assign each possible role a model and reasoning effort, and explain
+the size, route floor, assignments, and omitted roles to the human. No branch may execute until the
+human explicitly approves that immutable execution plan.
 
 ## Start a run
 
@@ -15,13 +19,21 @@ and the sole CLI mutator and dispatcher. Never give branch agents database paths
    `references/task-brief.schema.json` under a repository-policy artifact root.
 2. Hash the exact `.codex/engineering-graph.json` bytes and put that digest in the brief's
    `policy_approval`.
-3. Initialize the ledger:
+3. Initialize the ledger and generate the execution-plan summary. Pass `--size small|medium|large`
+   when the Supervisor chooses an explicit size; otherwise the engine records its bounded recommendation:
 
-   `python <skill>/scripts/graphctl.py --repo <repo> [degraded acknowledgments] init --run-id <id> --task-brief <path> --op-id <id>`
+   `python <skill>/scripts/graphctl.py --repo <repo> [degraded acknowledgments] init --run-id <id> --task-brief <path> --size <size> --op-id <id>`
 
-4. Dispatch only the envelope returned by `next --claim`. The first branch is always
+4. Present the returned `execution_plan` and its digest to the human. Record an explicit local approval
+   or rejection before dispatching anything:
+
+   `python <skill>/scripts/graphctl.py --repo <repo> record plan-approval --run-id <id> --plan-digest <digest> --decision APPROVE --authority-ref authority:<id> --op-id <id>`
+
+   `next`, `ready`, and `next --claim` remain blocked while this approval is pending. A rejected plan
+   blocks the run; start a new run for a materially different size, route, role set, model, or effort.
+5. Dispatch only the envelope returned by `next --claim` after approval. The first branch is always
    `impact_mapper`.
-5. Put each returned branch manifest in the derived run inbox shown by `init` or `status`, then use
+6. Put each returned branch manifest in the derived run inbox shown by `init` or `status`, then use
    `record branch-result` with the claimed `attempt_id` and `claim_token`. Branch manifests never
    contain control mutations.
 
@@ -83,11 +95,18 @@ Before dispatching any subagent, tell the user its role, exact model, reasoning 
 task scope. When dispatching several agents together, use one compact announcement that lists each
 agent and identifies which work will run in parallel.
 
-Resolve model and effort from the selected role's fixed configuration or explicit spawn settings.
-If either value is not exposed, state that it is inherited or unavailable instead of guessing. Tell
-the user before dispatch when a retry, replacement, or follow-up changes the model or effort.
+Resolve model and effort from the approved execution plan. The plan uses the role profile defaults for
+medium work and bounded size-specific overrides for small or large work. If either value is not exposed,
+state that it is inherited or unavailable instead of guessing, and do not dispatch that role until the
+human approves a plan that makes the assignment explicit. Tell the user before dispatch when a retry,
+replacement, or follow-up changes the model or effort; that change requires a new plan and approval.
 
 ## Select the route
+
+T-shirt size the job before assigning intelligence. Use small for bounded, low-risk work, medium for
+cross-file or elevated-risk work, and large for critical, cross-cutting, or high-uncertainty work. The
+size is a planning decision, not a proxy for route selection: a small task may still need a full route,
+and a large task may use only the roles pertinent to its approved scope.
 
 Scope the job before selecting roles. Choose the smallest route that preserves the required independence;
 do not dispatch a role merely because it exists in the base graph. Each selected role must have a
@@ -110,6 +129,11 @@ Use the full graph when the task's complexity, risk, cross-cutting impact, or ac
 all of its design and delivery roles. Record the route and the reason for each omitted base role in the
 Supervisor's task brief or closure packet so a smaller graph is an explicit scope decision, not an
 accidental missing gate.
+
+The execution plan must list the exact model and reasoning effort for every role that may be dispatched,
+including conditional specialists. Human approval covers that complete assignment matrix. The Impact
+Mapper may narrow the approved role set through route and impact classification, but it may not introduce
+an unapproved role, model, or effort. A retry, replacement, or material route change returns to preflight.
 
 Then apply these route rules:
 

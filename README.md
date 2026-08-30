@@ -22,10 +22,16 @@ that matches the command, repository worktree, host, and actor.
 
 The ledger also fences retries with per-claim attempt tokens, exposes expiring branch leases with a
 heartbeat command, records local approval attestations, and enforces a deterministic security gate
-for critical delivery tasks.
+for critical delivery tasks. Each run now creates a T-shirt-sized execution plan with exact model and
+reasoning-effort assignments before any branch can be claimed. `record plan-approval` is required before
+Impact Mapper or any other agent executes; the approved plan is included in every branch envelope.
 
-These changes use state schema 3. Existing schema-2 runs fail closed and must be started again; no
-automatic migration is performed.
+The operational order is `init` with an optional `--size`, review the returned plan, record
+`record plan-approval`, and only then use `next --claim`. The plan records assignments for conditional
+specialists too, so route narrowing cannot silently introduce a new model or effort level.
+
+These changes use state schema 4. Existing schema-2 or schema-3 runs fail closed and must be started
+again; no automatic migration is performed.
 
 Run the focused checks with bytecode disabled:
 

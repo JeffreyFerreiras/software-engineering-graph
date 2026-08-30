@@ -40,6 +40,11 @@ CREATE TABLE runs (
   local_filesystem TEXT NOT NULL, host_identity TEXT NOT NULL, database_device INTEGER,
   database_inode INTEGER, blocked_reason TEXT, authoritative INTEGER NOT NULL
 );
+CREATE TABLE execution_plans (
+  run_id TEXT PRIMARY KEY REFERENCES runs(run_id), size TEXT NOT NULL,
+  plan_json TEXT NOT NULL, plan_digest TEXT NOT NULL, status TEXT NOT NULL,
+  authority_ref TEXT, approved_at TEXT, approved_by TEXT, approval_digest TEXT
+);
 CREATE TABLE nodes (
   branch_id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(run_id), node_instance_id TEXT NOT NULL UNIQUE,
   node_key TEXT NOT NULL, role TEXT NOT NULL, stage TEXT NOT NULL, generation INTEGER NOT NULL,
@@ -110,6 +115,7 @@ MUTATION_RUN_STATES = {
     "record.skip": {"active"},
     "record.retry": {"initialized", "active"},
     "record.approval": {"initialized", "active"},
+    "record.plan-approval": {"initialized"},
     "record.heartbeat": {"initialized", "active"},
     "record.budget-use": {"initialized", "active"},
     "record.acceptance-evidence": {"active"},
@@ -405,6 +411,7 @@ class StateStore:
         ack_permissions: bool,
         ack_durability: bool,
         bootstrap_row: Mapping[str, Any],
+        execution_plan: Mapping[str, Any],
         task_ref: str,
         initial_artifacts: Sequence[Mapping[str, Any]],
     ) -> Dict[str, Any]:
@@ -519,6 +526,14 @@ class StateStore:
                 authoritative) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 row,
             )
+            connection.execute(
+                "INSERT INTO execution_plans(run_id,size,plan_json,plan_digest,status) VALUES(?,?,?,?,?)",
+                (
+                    run_id, execution_plan["size"],
+                    json.dumps(execution_plan, sort_keys=True, separators=(",", ":")),
+                    execution_plan["plan_digest"], "pending",
+                ),
+            )
             for artifact in initial_artifacts:
                 connection.execute(
                     "INSERT INTO artifacts VALUES(?,?,?,?,?,?,?,?,?,?,?)",
@@ -539,6 +554,8 @@ class StateStore:
             response = {
                 "schema_version": 1, "ok": True, "code": "INITIALIZED", "run_id": run_id,
                 "state_revision": 1, "status": "initialized", "branch": json.loads(bootstrap_row["envelope_json"]),
+                "execution_plan": dict(execution_plan), "execution_plan_digest": execution_plan["plan_digest"],
+                "execution_plan_status": "pending", "approval_required": True,
                 "inbox": str(inbox), "permission_verification": permission_state,
             }
             connection.execute(

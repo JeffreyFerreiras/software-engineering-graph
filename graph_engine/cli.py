@@ -22,6 +22,7 @@ from .evidence import (
     VerifiedArtifact, canonical_ledger_artifact, enforce_artifact_size, persist_artifact,
     resolve_reference, resolve_unhashed_reference,
 )
+from .execution import build_execution_plan, plan_approval_digest
 from .ids import canonical_bytes, sha256_bytes
 from .planner import (
     JoinSpec, NodeSpec, bootstrap, branch_id, closure_join, collection_join,
@@ -133,7 +134,16 @@ def _insert_spec(
     store: StateStore, connection: sqlite3.Connection, run: Mapping[str, Any], policy: Mapping[str, Any],
     task: Mapping[str, Any], spec: NodeSpec, inputs: Sequence[Mapping[str, Any]], status: str = "ready",
 ) -> Dict[str, Any]:
-    graph_envelope = envelope(run["run_id"], run["policy_digest"], policy, task, spec, status, inputs)
+    plan_row = connection.execute(
+        "SELECT plan_json FROM execution_plans WHERE run_id=?", (run["run_id"],)
+    ).fetchone()
+    if plan_row is None:
+        raise StateError("EXECUTION_PLAN_STATE_INVALID")
+    execution_plan = json.loads(plan_row["plan_json"])
+    graph_envelope = envelope(
+        run["run_id"], run["policy_digest"], policy, task, spec, status, inputs,
+        execution_plan=execution_plan,
+    )
     row = _node_row(spec, graph_envelope)
     store._insert_node(connection, run["run_id"], row)
     return row
@@ -238,6 +248,7 @@ def command_init(args: argparse.Namespace, repo: Path, policy: Mapping[str, Any]
     )
     full_task = validate_task_brief(task_snapshot.parsed, policy_snapshot.digest, policy)
     task = authoritative_task_subset(full_task)
+    execution_plan = build_execution_plan(run_id, task, args.size)
     skill_root = Path(__file__).resolve().parents[1]
     verified_evidence = [
         resolve_unhashed_reference(ref, "acceptance_evidence", repo, skill_root, policy)
@@ -253,6 +264,7 @@ def command_init(args: argparse.Namespace, repo: Path, policy: Mapping[str, Any]
     graph_envelope = envelope(
         run_id, policy_snapshot.digest, policy, task, spec, "ready",
         [{"kind": "task_brief", "ref": task_ref, "sha256": task_snapshot.digest, "size_bytes": task_snapshot.size}],
+        execution_plan=execution_plan,
     )
     request = {
         "command": "init", "run_id": run_id, "op_id": op_id,
@@ -260,12 +272,15 @@ def command_init(args: argparse.Namespace, repo: Path, policy: Mapping[str, Any]
         "evidence_digests": sorted((artifact.ref, artifact.sha256) for artifact in verified_evidence),
         "ack_permissions": bool(args.ack_degraded_permissions),
         "ack_durability": bool(args.ack_degraded_durability),
+        "execution_size": execution_plan["size"],
+        "execution_plan_digest": execution_plan["plan_digest"],
     }
     request_digest = sha256_bytes(canonical_bytes(request))
     return store.initialize(
         repo, policy, policy_snapshot.digest, task, task_snapshot.path, task_snapshot.digest,
         run_id, op_id, request_digest, bool(args.ack_degraded_permissions),
         bool(args.ack_degraded_durability), _node_row(spec, graph_envelope),
+        execution_plan,
         task_ref, [asdict(task_artifact)] + [asdict(artifact) for artifact in verified_evidence],
     )
 
@@ -426,6 +441,15 @@ def _record_control(
         })
         if request["actor"] != current_actor():
             raise StateError("APPROVAL_ACTOR_MISMATCH")
+    elif kind == "plan-approval":
+        request.update({
+            "plan_digest": digest(args.plan_digest, "plan_digest"),
+            "decision": args.decision,
+            "authority_ref": validate_ref(args.authority_ref, "authority_ref"),
+            "actor": current_actor() if args.actor is None else bounded_string(args.actor, "actor", 256),
+        })
+        if request["actor"] != current_actor():
+            raise StateError("APPROVAL_ACTOR_MISMATCH")
     elif kind == "budget-use":
         if args.amount <= 0:
             raise ContractError("amount", "POSITIVE_INTEGER_REQUIRED")
@@ -441,6 +465,36 @@ def _record_control(
             request.update({"check_id": opaque(args.check_id, "check_id"), "outcome": args.outcome})
 
     def action(conn: sqlite3.Connection, current: sqlite3.Row, revision: int) -> Dict[str, Any]:
+        if kind == "plan-approval":
+            plan = conn.execute(
+                "SELECT * FROM execution_plans WHERE run_id=?", (current["run_id"],)
+            ).fetchone()
+            if plan is None or plan["status"] != "pending":
+                raise StateError("EXECUTION_PLAN_APPROVAL_CONFLICT")
+            if request["plan_digest"] != plan["plan_digest"]:
+                raise StateError("EXECUTION_PLAN_DIGEST_MISMATCH")
+            approved_at = utc_now()
+            host_identity = current_host_identity()
+            approval_digest = plan_approval_digest(
+                current["run_id"], request["plan_digest"], request["decision"],
+                request["authority_ref"], request["actor"], host_identity, approved_at,
+            )
+            target_status = "active" if request["decision"] == "APPROVE" else "blocked"
+            plan_status = "approved" if request["decision"] == "APPROVE" else "rejected"
+            blocked_reason = None if request["decision"] == "APPROVE" else "EXECUTION_PLAN_REJECTED"
+            conn.execute(
+                """UPDATE execution_plans SET status=?,authority_ref=?,approved_at=?,approved_by=?,approval_digest=?
+                WHERE run_id=?""",
+                (plan_status, request["authority_ref"], approved_at, request["actor"], approval_digest, current["run_id"]),
+            )
+            conn.execute(
+                "UPDATE runs SET status=?,blocked_reason=? WHERE run_id=?",
+                (target_status, blocked_reason, current["run_id"]),
+            )
+            return {
+                "code": "EXECUTION_PLAN_APPROVED" if request["decision"] == "APPROVE" else "EXECUTION_PLAN_REJECTED",
+                "status": target_status, "plan_digest": request["plan_digest"],
+            }
         if kind in {"timeout", "skip", "retry", "heartbeat"}:
             branch = conn.execute("SELECT * FROM nodes WHERE branch_id=?", (args.branch_id,)).fetchone()
             if not branch:
@@ -673,6 +727,15 @@ def command_next(
             return _json_result(False, "GRAPH_BLOCKED", run["run_id"], run["state_revision"], branches=[])
         if run["status"] in {"complete", "aborted"}:
             return _json_result(False, "NOT_READY", run["run_id"], run["state_revision"], branches=[])
+        plan = connection.execute(
+            "SELECT size,plan_digest,status FROM execution_plans WHERE run_id=?", (run["run_id"],)
+        ).fetchone()
+        if plan is None or plan["status"] != "approved":
+            return _json_result(
+                False, "EXECUTION_PLAN_APPROVAL_REQUIRED", run["run_id"], run["state_revision"],
+                execution_plan={"size": plan["size"], "plan_digest": plan["plan_digest"], "status": plan["status"]} if plan else None,
+                branches=[],
+            )
         ready = _ready_envelopes(connection, run)
         selected = ready if args.all else ready[:1]
         code = "READY" if selected else "NOT_READY"
@@ -681,6 +744,11 @@ def command_next(
     request = {"command": "next.claim"}
 
     def action(conn: sqlite3.Connection, current: sqlite3.Row, revision: int) -> Dict[str, Any]:
+        plan = conn.execute(
+            "SELECT status FROM execution_plans WHERE run_id=?", (current["run_id"],)
+        ).fetchone()
+        if plan is None or plan["status"] != "approved":
+            raise StateError("EXECUTION_PLAN_APPROVAL_REQUIRED")
         row = conn.execute(
             "SELECT * FROM nodes WHERE run_id=? AND status='ready' ORDER BY branch_id LIMIT 1",
             (current["run_id"],),
@@ -846,6 +914,15 @@ def command_join_advance(args: argparse.Namespace, connection: sqlite3.Connectio
 def _next_action(connection: sqlite3.Connection, run: Mapping[str, Any]) -> Dict[str, Any]:
     if run["status"] in {"blocked", "complete", "aborted"}:
         return {"kind": run["status"]}
+    plan = connection.execute(
+        "SELECT size,plan_digest,status FROM execution_plans WHERE run_id=?", (run["run_id"],)
+    ).fetchone()
+    if plan is None or plan["status"] != "approved":
+        return {
+            "kind": "await_execution_plan_approval",
+            "size": plan["size"] if plan else None,
+            "plan_digest": plan["plan_digest"] if plan else None,
+        }
     ready = connection.execute("SELECT branch_id FROM nodes WHERE run_id=? AND status='ready' ORDER BY branch_id LIMIT 1", (run["run_id"],)).fetchone()
     if ready:
         return {"kind": "claim", "branch_id": ready["branch_id"]}
@@ -880,6 +957,15 @@ def command_status(connection: sqlite3.Connection, run: sqlite3.Row) -> Dict[str
     approvals = connection.execute("SELECT a.approval_id,a.scope_ref,a.decision,a.authority_ref,a.artifact_sha256,aa.actor,aa.approved_at FROM approvals a JOIN approval_attestations aa ON aa.run_id=a.run_id AND aa.approval_id=a.approval_id WHERE a.run_id=? ORDER BY a.approval_id", (run["run_id"],)).fetchall()
     acceptance = connection.execute("SELECT criterion_id,artifact_ref,artifact_sha256 FROM acceptance_evidence WHERE run_id=? ORDER BY criterion_id", (run["run_id"],)).fetchall()
     checks = connection.execute("SELECT check_id,outcome,artifact_ref,artifact_sha256 FROM check_evidence WHERE run_id=? ORDER BY check_id", (run["run_id"],)).fetchall()
+    plan = connection.execute("SELECT * FROM execution_plans WHERE run_id=?", (run["run_id"],)).fetchone()
+    execution_plan = None
+    if plan:
+        execution_plan = json.loads(plan["plan_json"])
+        execution_plan.update({
+            "plan_digest": plan["plan_digest"], "status": plan["status"],
+            "authority_ref": plan["authority_ref"], "approved_at": plan["approved_at"],
+            "approved_by": plan["approved_by"],
+        })
     return _json_result(
         True, "STATUS", run["run_id"], run["state_revision"], sensitive=True, status=run["status"],
         route=run["selected_route"], impact_tags=json.loads(run["selected_tags_json"] or "[]"),
@@ -887,6 +973,7 @@ def command_status(connection: sqlite3.Connection, run: sqlite3.Row) -> Dict[str
         state_schema_version=run["state_schema_version"], local_filesystem=run["local_filesystem"],
         durability=run["durability"], durability_detail=run["durability_detail"],
         permission_verification=run["permission_verification"],
+        execution_plan=execution_plan,
         acknowledgments={
             "host_identity": run["host_identity"],
             "degraded_permissions": bool(run["degraded_permissions_ack"]),
@@ -897,6 +984,8 @@ def command_status(connection: sqlite3.Connection, run: sqlite3.Row) -> Dict[str
                 "branch_id": row["branch_id"], "node_key": row["node_key"], "role": row["role"],
                 "generation": row["generation"], "status": row["status"],
                 "retry_count": row["retry_count"], "max_retries": row["max_retries"],
+                "model": json.loads(row["envelope_json"]).get("model"),
+                "reasoning_effort": json.loads(row["envelope_json"]).get("reasoning_effort"),
                 "attempt_id": json.loads(row["envelope_json"]).get("attempt_id"),
                 "lease_expires_at": json.loads(row["envelope_json"]).get("lease_expires_at"),
             }
@@ -1013,6 +1102,7 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     init = commands.add_parser("init")
     init.add_argument("--run-id", required=True); init.add_argument("--task-brief", required=True); init.add_argument("--op-id", required=True)
+    init.add_argument("--size", choices=["small", "medium", "large"])
     init.add_argument("--ack-degraded-permissions", action="store_true", default=argparse.SUPPRESS)
     init.add_argument("--ack-degraded-durability", action="store_true", default=argparse.SUPPRESS)
     record = commands.add_parser("record")
@@ -1025,6 +1115,7 @@ def build_parser() -> argparse.ArgumentParser:
     retry = records.add_parser("retry"); retry.add_argument("--run-id", required=True); retry.add_argument("--branch-id", required=True); retry.add_argument("--reason-code", required=True); retry.add_argument("--op-id", required=True)
     heartbeat = records.add_parser("heartbeat"); heartbeat.add_argument("--run-id", required=True); heartbeat.add_argument("--branch-id", required=True); heartbeat.add_argument("--attempt-id", required=True); heartbeat.add_argument("--claim-token", required=True); heartbeat.add_argument("--op-id", required=True)
     approval = records.add_parser("approval"); approval.add_argument("--run-id", required=True); approval.add_argument("--approval-id", required=True); approval.add_argument("--scope-ref", required=True); approval.add_argument("--decision", choices=["APPROVE", "REJECT"], required=True); approval.add_argument("--authority-ref", required=True); approval.add_argument("--artifact-sha256", required=True); approval.add_argument("--actor"); approval.add_argument("--op-id", required=True)
+    plan_approval = records.add_parser("plan-approval"); plan_approval.add_argument("--run-id", required=True); plan_approval.add_argument("--plan-digest", required=True); plan_approval.add_argument("--decision", choices=["APPROVE", "REJECT"], required=True); plan_approval.add_argument("--authority-ref", required=True); plan_approval.add_argument("--actor"); plan_approval.add_argument("--op-id", required=True)
     budget = records.add_parser("budget-use"); budget.add_argument("--run-id", required=True); budget.add_argument("--budget-id", required=True); budget.add_argument("--amount", type=int, required=True); budget.add_argument("--source-branch-id", required=True); budget.add_argument("--op-id", required=True)
     acceptance = records.add_parser("acceptance-evidence"); acceptance.add_argument("--run-id", required=True); acceptance.add_argument("--criterion-id", required=True); acceptance.add_argument("--artifact-ref", required=True); acceptance.add_argument("--artifact-sha256", required=True); acceptance.add_argument("--op-id", required=True)
     check = records.add_parser("check-evidence"); check.add_argument("--run-id", required=True); check.add_argument("--check-id", required=True); check.add_argument("--outcome", choices=["PASS", "FAIL", "NOT_RUN"], required=True); check.add_argument("--artifact-ref", required=True); check.add_argument("--artifact-sha256", required=True); check.add_argument("--op-id", required=True)
@@ -1084,7 +1175,7 @@ def execute(argv: Optional[Sequence[str]] = None, store: Optional[StateStore] = 
             result = command_run_control(args, connection, run, stored_policy, task, state)
     if result["code"] == "NOT_READY":
         return result, 2
-    if result["code"] == "GRAPH_BLOCKED":
+    if result["code"] in {"GRAPH_BLOCKED", "EXECUTION_PLAN_REJECTED"}:
         return result, 3
     return result, 0
 
@@ -1100,7 +1191,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "INITIALIZATION_CONFLICT", "RUN_ALREADY_EXISTS", "INCOMPLETE_INIT_CONFLICT",
         }
         blocked = error.code in {"GRAPH_BLOCKED", "RETRY_LIMIT", "BUDGET_LIMIT"}
-        not_ready = error.code in {"NOT_READY", "RETRY_REQUIRED"}
+        not_ready = error.code in {"NOT_READY", "RETRY_REQUIRED", "EXECUTION_PLAN_APPROVAL_REQUIRED"}
         result = _json_result(False, error.code, None, None)
         exit_code = 5 if conflict else 3 if blocked else 2 if not_ready else 4
     except (OSError, sqlite3.Error):

@@ -3,11 +3,14 @@
 > Current status: the original source-copy design below is historical. The local graph engine now
 > includes attempt fencing, expiring leases and heartbeats, provider-produced check receipts, local
 > approval attestations, configurable check commands, and a deterministic critical-risk security
-> floor. The source checkout still does not implement a model-provider agent dispatcher or CI.
+> floor. Each run also creates a human-approved T-shirt-sized execution plan with model and reasoning
+> effort assignments before branch claims. The source checkout still does not implement a model-provider
+> agent dispatcher or CI.
 
 ## Design status
 
-IMPLEMENTED local hardening; source-copy sections retained as historical context.
+IMPLEMENTED local hardening and human-approved dynamic execution planning; source-copy sections retained
+as historical context.
 
 ## Historical source-copy design
 

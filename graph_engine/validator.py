@@ -14,6 +14,7 @@ from .contracts import (
 )
 from .config import engine_version_compatible
 from .evidence import reverify_artifact
+from .execution import build_execution_plan, plan_approval_digest
 from .ids import canonical_bytes, sha256_bytes, stable_id
 from .planner import NodeSpec, envelope
 from .state import StateError, current_host_identity, repository_identity
@@ -231,7 +232,53 @@ def _validate_operation_ledger(connection: sqlite3.Connection, run: Mapping[str,
         raise StateError("OPERATION_LEDGER_INVALID")
 
 
+def _validate_execution_plan(
+    connection: sqlite3.Connection, run: Mapping[str, Any], task: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    row = connection.execute(
+        "SELECT * FROM execution_plans WHERE run_id=?", (run["run_id"],)
+    ).fetchone()
+    if row is None or row["status"] not in {"pending", "approved", "rejected"}:
+        raise StateError("EXECUTION_PLAN_STATE_INVALID")
+    try:
+        plan = json.loads(row["plan_json"])
+    except (TypeError, json.JSONDecodeError):
+        raise StateError("EXECUTION_PLAN_STATE_INVALID")
+    try:
+        requested_size = row["size"] if plan.get("size_source") == "supervisor_override" else None
+        expected = build_execution_plan(run["run_id"], task, requested_size)
+        plan_digest = digest(row["plan_digest"], "execution_plan.plan_digest")
+    except (ContractError, ValueError):
+        raise StateError("EXECUTION_PLAN_STATE_INVALID")
+    unsigned_plan = dict(plan)
+    unsigned_plan.pop("plan_digest", None)
+    if plan != expected or plan_digest != sha256_bytes(canonical_bytes(unsigned_plan)) or plan.get("plan_digest") != row["plan_digest"]:
+        raise StateError("EXECUTION_PLAN_STATE_INVALID")
+    if row["status"] == "pending":
+        if run["status"] not in {"initialized", "blocked", "aborted"} or any(row[key] is not None for key in ("approved_at", "approved_by", "approval_digest")):
+            raise StateError("EXECUTION_PLAN_STATE_INVALID")
+    else:
+        if row["status"] == "rejected" and run["status"] != "blocked":
+            raise StateError("EXECUTION_PLAN_STATE_INVALID")
+        if row["status"] == "approved" and run["status"] == "initialized":
+            raise StateError("EXECUTION_PLAN_STATE_INVALID")
+        if not row["authority_ref"] or not row["approved_at"] or not row["approved_by"] or not row["approval_digest"]:
+            raise StateError("EXECUTION_PLAN_APPROVAL_INVALID")
+        expected_approval = plan_approval_digest(
+            run["run_id"], row["plan_digest"],
+            "APPROVE" if row["status"] == "approved" else "REJECT",
+            row["authority_ref"], row["approved_by"],
+            run["host_identity"], row["approved_at"],
+        )
+        if row["approval_digest"] != expected_approval:
+            raise StateError("EXECUTION_PLAN_APPROVAL_INVALID")
+    return plan
+
+
 def _validate_nodes(connection: sqlite3.Connection, run: Mapping[str, Any], task: Mapping[str, Any], policy: Mapping[str, Any]) -> None:
+    execution_plan = json.loads(
+        connection.execute("SELECT plan_json FROM execution_plans WHERE run_id=?", (run["run_id"],)).fetchone()[0]
+    )
     specialist_by_node = {value["node_key"]: key for key, value in policy["specialists"].items()}
     for node in connection.execute("SELECT * FROM nodes WHERE run_id=?", (run["run_id"],)):
         template = policy["node_templates"].get(node["node_key"])
@@ -253,13 +300,13 @@ def _validate_nodes(connection: sqlite3.Connection, run: Mapping[str, Any], task
             raise StateError("ENVELOPE_INVALID")
         expected_envelope = envelope(
             run["run_id"], run["policy_digest"], policy, task, spec, node["status"],
-            stored_envelope.get("inputs", []), node["retry_count"],
+            stored_envelope.get("inputs", []), node["retry_count"], execution_plan,
         )
         for runtime_key in ("attempt_id", "claim_digest", "lease_expires_at"):
             expected_envelope[runtime_key] = stored_envelope.get(runtime_key)
         immutable_keys = {
             "schema_version", "run_id", "branch_id", "node_instance_id", "node_key", "role",
-            "mandatory", "generation", "inputs", "effect_capabilities", "output_contract",
+            "model", "reasoning_effort", "mandatory", "generation", "inputs", "effect_capabilities", "output_contract",
             "stopping_condition", "retry_count", "max_retries",
             "attempt_id", "claim_digest", "lease_expires_at",
         }
@@ -611,6 +658,7 @@ def _verify_semantic_state(
         raise StateError("TASK_METADATA_INVALID")
     _validate_budget_state(connection, run, task, policy)
     _validate_operation_ledger(connection, run)
+    _validate_execution_plan(connection, run, task)
     _validate_nodes(connection, run, task, policy)
     _validate_joins(connection, run, policy)
     _validate_route_and_topology(connection, run, task, policy)

@@ -128,6 +128,38 @@ class GraphHardeningTests(GraphCase):
         self.assertEqual(result["branch_status"], "succeeded")
         self.assertEqual(self.graphctl("status", "--run-id", "RUN-1")["status"], "active")
 
+    def test_execution_plan_is_visible_and_blocks_claim_until_human_approval(self):
+        initialized = self.initialize(size="small", approve=False)
+        plan = initialized["execution_plan"]
+        self.assertEqual(plan["size"], "small")
+        self.assertTrue(plan["approval_required"])
+        senior = next(item for item in plan["assignments"] if item["node_key"] == "senior_engineer")
+        self.assertEqual((senior["model"], senior["reasoning_effort"]), ("gpt-5.6-luna", "medium"))
+        ready = self.graphctl("next", "--run-id", "RUN-1")
+        self.assertEqual(ready["code"], "EXECUTION_PLAN_APPROVAL_REQUIRED")
+        with self.assertRaisesRegex(StateError, "EXECUTION_PLAN_APPROVAL_REQUIRED"):
+            self.claim()
+        self.graphctl(
+            "record", "plan-approval", "--run-id", "RUN-1",
+            "--plan-digest", initialized["execution_plan_digest"], "--decision", "APPROVE",
+            "--authority-ref", "authority:test", "--op-id", "plan-approval-1",
+        )
+        branch = self.claim()
+        self.assertEqual((branch["model"], branch["reasoning_effort"]), ("gpt-5.6-luna", "low"))
+
+    def test_rejected_execution_plan_blocks_the_run(self):
+        initialized = self.initialize(approve=False)
+        result = self.graphctl(
+            "record", "plan-approval", "--run-id", "RUN-1",
+            "--plan-digest", initialized["execution_plan_digest"], "--decision", "REJECT",
+            "--authority-ref", "authority:test", "--op-id", "plan-rejection-1",
+        )
+        self.assertEqual(result["status"], "blocked")
+        status = self.graphctl("status", "--run-id", "RUN-1")
+        self.assertEqual(status["execution_plan"]["status"], "rejected")
+        with self.assertRaisesRegex(StateError, "GRAPH_BLOCKED"):
+            self.claim()
+
     def test_critical_delivery_is_forced_through_security_full_delivery(self):
         policy, snapshot = load_policy(self.repo)
         task = self.task(route="fast_path")

@@ -5,6 +5,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from .ids import stable_id
 from .config import ENGINE_ROLE_CAPABILITIES
+from .execution import assignment_for, build_execution_plan
 
 
 @dataclass(frozen=True)
@@ -142,8 +143,11 @@ def envelope(
     status: str,
     inputs: Sequence[Mapping[str, Any]],
     retry_count: int = 0,
+    execution_plan: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     template = _template(policy, spec.key)
+    plan = execution_plan or build_execution_plan(run_id, task)
+    assignment = assignment_for(plan, spec.key)
     authority = task["authority"]["capabilities"]
     configured = {
         (cap["effect"], cap["action"], cap["target_ref"])
@@ -164,6 +168,8 @@ def envelope(
         "node_instance_id": node_id(run_id, policy_digest, spec),
         "node_key": spec.key,
         "role": spec.role,
+        "model": assignment["model"],
+        "reasoning_effort": assignment["reasoning_effort"],
         "mandatory": spec.mandatory,
         "generation": spec.generation,
         "status": status,

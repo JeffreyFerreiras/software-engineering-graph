@@ -58,16 +58,29 @@ class GraphCase(unittest.TestCase):
     def graphctl(self, *args: str):
         return execute(["--repo", str(self.repo), *args], self.store)[0]
 
-    def initialize(self, mode: str = "delivery", route: str = "full_delivery", tags: Optional[List[str]] = None):
-        return self.initialize_task(self.task(mode, route, tags))
+    def initialize(
+        self, mode: str = "delivery", route: str = "full_delivery", tags: Optional[List[str]] = None,
+        size: Optional[str] = None, approve: bool = True,
+    ):
+        return self.initialize_task(self.task(mode, route, tags), size=size, approve=approve)
 
-    def initialize_task(self, task: Dict[str, Any]):
+    def initialize_task(self, task: Dict[str, Any], size: Optional[str] = None, approve: bool = True):
         task_path = self.repo / "docs" / "task.json"
         task_path.write_text(json.dumps(task), encoding="utf-8")
-        return self.graphctl(
+        args = [
             "--ack-degraded-permissions", "--ack-degraded-durability", "init",
             "--run-id", "RUN-1", "--task-brief", str(task_path), "--op-id", "init-1",
-        )
+        ]
+        if size:
+            args.extend(["--size", size])
+        result = self.graphctl(*args)
+        if approve:
+            self.graphctl(
+                "record", "plan-approval", "--run-id", "RUN-1",
+                "--plan-digest", result["execution_plan_digest"], "--decision", "APPROVE",
+                "--authority-ref", "authority:test", "--op-id", "plan-approval-1",
+            )
+        return result
 
     def inbox_manifest(self, content: Dict[str, Any], name: Optional[str] = None) -> Path:
         self.counter += 1
