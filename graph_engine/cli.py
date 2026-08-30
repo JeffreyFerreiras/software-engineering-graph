@@ -15,7 +15,7 @@ from .checks import configured_check, run_check, validate_check_receipt
 from .config import branch_lease_seconds, load_policy
 from .contracts import (
     ContractError, Snapshot, authoritative_task_subset, bounded_string, digest, opaque, require_keys,
-    safe_json_snapshot, validate_impact_map, validate_ref, validate_result_manifest,
+    safe_json_snapshot, validate_fanout_assessment, validate_impact_map, validate_ref, validate_result_manifest,
     validate_task_brief,
 )
 from .evidence import (
@@ -27,12 +27,12 @@ from .ids import canonical_bytes, sha256_bytes
 from .planner import (
     JoinSpec, NodeSpec, bootstrap, branch_id, closure_join, collection_join,
     consolidation_join, consolidation_node, delivery_review_nodes, design_review_nodes,
-    envelope, implementation_node, initial_route_nodes, join_id, next_join_for_success,
-    revised_design_node,
+    envelope, fanout_id, implementation_node, initial_route_nodes, join_id, next_join_for_success,
+    revised_design_node, validate_fanout_ordering,
 )
 from .state import StateError, StateStore, current_actor, current_host_identity, utc_after, utc_now
 from .validator import (
-    canonical_collection_members, join_members, validate_consolidation_manifest,
+    canonical_collection_members, compute_timing, join_members, validate_consolidation_manifest,
     validate_join, verify_resume, verify_semantic_state,
 )
 
@@ -167,6 +167,53 @@ def _insert_join(
     return row
 
 
+def _insert_fanout(
+    connection: sqlite3.Connection, run: Mapping[str, Any], stage: str, generation: int,
+    members: Sequence[Mapping[str, Any]],
+) -> str:
+    identifier = fanout_id(run["run_id"], run["policy_digest"], stage, generation)
+    member_ids = sorted(member["branch_id"] for member in members)
+    if len(member_ids) <= 1:
+        raise StateError("FANOUT_MEMBER_INVALID")
+    connection.execute(
+        "INSERT INTO fanouts(fanout_id,run_id,stage,generation,status,member_branch_ids_json) VALUES(?,?,?,?,?,?)",
+        (identifier, run["run_id"], stage, generation, "awaiting", json.dumps(member_ids, separators=(",", ":"))),
+    )
+    return identifier
+
+
+def _branch_settled(branch: Mapping[str, Any]) -> bool:
+    return branch["status"] in {"succeeded", "skipped"} or (
+        branch["status"] in {"failed", "timed_out"} and branch["retry_count"] >= branch["max_retries"]
+    )
+
+
+def _promote_fanout_successors(connection: sqlite3.Connection, run_id: str) -> List[str]:
+    promoted: List[str] = []
+    for fanout in connection.execute(
+        "SELECT * FROM fanouts WHERE run_id=? AND status='assessed' ORDER BY fanout_id", (run_id,)
+    ):
+        member_ids = json.loads(fanout["member_branch_ids_json"])
+        for branch_id_value in member_ids:
+            branch = connection.execute("SELECT * FROM nodes WHERE branch_id=?", (branch_id_value,)).fetchone()
+            if branch is None or branch["status"] != "pending":
+                continue
+            predecessors = connection.execute(
+                """SELECT n.* FROM fanout_dependencies d JOIN nodes n ON n.branch_id=d.before_branch_id
+                WHERE d.fanout_id=? AND d.after_branch_id=?""",
+                (fanout["fanout_id"], branch_id_value),
+            ).fetchall()
+            if all(_branch_settled(predecessor) for predecessor in predecessors):
+                env = json.loads(branch["envelope_json"])
+                env["status"] = "ready"
+                connection.execute(
+                    "UPDATE nodes SET status='ready',envelope_json=? WHERE branch_id=?",
+                    (json.dumps(env, sort_keys=True), branch_id_value),
+                )
+                promoted.append(branch_id_value)
+    return sorted(promoted)
+
+
 def _run_context(connection: sqlite3.Connection, run_id: str) -> Tuple[sqlite3.Row, Dict[str, Any], Dict[str, Any]]:
     run = connection.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
     if run is None:
@@ -298,6 +345,8 @@ def _record_branch_result(
     }
 
     def action(conn: sqlite3.Connection, current: sqlite3.Row, revision: int) -> Dict[str, Any]:
+        successor_ids: List[str] = []
+        created_join_ids: List[str] = []
         current_branch = conn.execute("SELECT * FROM nodes WHERE branch_id=?", (args.branch_id,)).fetchone()
         if current_branch is None:
             raise StateError("BRANCH_NOT_FOUND")
@@ -335,7 +384,7 @@ def _record_branch_result(
             fresh_run = conn.execute("SELECT * FROM runs WHERE run_id=?", (current["run_id"],)).fetchone()
             inputs = _context_inputs(conn, fresh_run, [])
             for spec in initial_route_nodes(policy, impact["route_label"]):
-                _insert_spec(store, conn, fresh_run, policy, task, spec, inputs)
+                successor_ids.append(_insert_spec(store, conn, fresh_run, policy, task, spec, inputs)["branch_id"])
         else:
             validated = validate_result_manifest(snapshot.parsed, branch_contract)
             manifest = validated
@@ -391,6 +440,16 @@ def _record_branch_result(
             (result_status, json.dumps(env, sort_keys=True), ledger_artifact.content_json,
              ledger_artifact.sha256, failure, env["finished_at"], args.branch_id),
         )
+        attempt = conn.execute(
+            "SELECT * FROM branch_attempts WHERE run_id=? AND branch_id=? AND attempt_id=?",
+            (current["run_id"], args.branch_id, args.attempt_id),
+        ).fetchone()
+        if attempt is None or attempt["finished_at"] is not None:
+            raise StateError("ATTEMPT_STATE_INVALID")
+        conn.execute(
+            "UPDATE branch_attempts SET finished_at=?,outcome=? WHERE branch_id=? AND attempt_number=?",
+            (env["finished_at"], result_status, args.branch_id, attempt["attempt_number"]),
+        )
         if result_status == "succeeded" and current_branch["node_key"] != "impact_mapper":
             updated = conn.execute("SELECT * FROM nodes WHERE branch_id=?", (args.branch_id,)).fetchone()
             route = current["selected_route"]
@@ -401,8 +460,13 @@ def _record_branch_result(
                     bool(updated["mandatory"]), updated["specialist_tag"],
                 )])
             if join_spec:
-                _insert_join(store, conn, current, join_spec)
-        return {"code": "BRANCH_RESULT_RECORDED", "branch_id": args.branch_id, "branch_status": result_status}
+                created_join_ids.append(_insert_join(store, conn, current, join_spec)["join_id"])
+        promoted = _promote_fanout_successors(conn, current["run_id"])
+        return {
+            "code": "BRANCH_RESULT_RECORDED", "branch_id": args.branch_id,
+            "branch_status": result_status, "successor_branch_ids": sorted(successor_ids),
+            "created_join_ids": sorted(created_join_ids), "promoted_branch_ids": promoted,
+        }
 
     return store.mutate(connection, run["run_id"], opaque(args.op_id, "op_id"), request, action)
 
@@ -488,8 +552,8 @@ def _record_control(
                 (plan_status, request["authority_ref"], approved_at, request["actor"], approval_digest, current["run_id"]),
             )
             conn.execute(
-                "UPDATE runs SET status=?,blocked_reason=? WHERE run_id=?",
-                (target_status, blocked_reason, current["run_id"]),
+                "UPDATE runs SET status=?,blocked_reason=?,finished_at=CASE WHEN ?='blocked' THEN COALESCE(finished_at,?) ELSE finished_at END WHERE run_id=?",
+                (target_status, blocked_reason, target_status, utc_now(), current["run_id"]),
             )
             return {
                 "code": "EXECUTION_PLAN_APPROVED" if request["decision"] == "APPROVE" else "EXECUTION_PLAN_REJECTED",
@@ -530,11 +594,11 @@ def _record_control(
                     raise StateError("INVALID_BRANCH_TRANSITION")
                 if branch["retry_count"] >= branch["max_retries"]:
                     if branch["mandatory"]:
-                        conn.execute("UPDATE runs SET status='blocked',blocked_reason='RETRY_LIMIT' WHERE run_id=?", (current["run_id"],))
+                        conn.execute("UPDATE runs SET status='blocked',blocked_reason='RETRY_LIMIT',finished_at=COALESCE(finished_at,?) WHERE run_id=?", (utc_now(), current["run_id"]))
                     return {"code": "GRAPH_BLOCKED", "status": "blocked", "reason": "RETRY_LIMIT"}
                 new_status = "ready"
                 env["retry_count"] += 1
-                env["started_at"] = env["finished_at"] = None
+                env["finished_at"] = None
                 env["attempt_id"] = env["claim_digest"] = env["lease_expires_at"] = None
                 env.update({"artifact_ref": None, "evidence": [], "decision": None, "failure_code": None})
                 conn.execute(
@@ -577,12 +641,28 @@ def _record_control(
                     (new_status, args.reason_code, json.dumps(env, sort_keys=True), branch_artifact.content_json,
                      branch_artifact.sha256, env.get("finished_at"), args.branch_id),
                 )
+                if kind == "timeout":
+                    attempt = conn.execute(
+                        "SELECT * FROM branch_attempts WHERE run_id=? AND branch_id=? AND attempt_id=?",
+                        (current["run_id"], branch["branch_id"], args.attempt_id),
+                    ).fetchone()
+                    if attempt is None or attempt["finished_at"] is not None:
+                        raise StateError("ATTEMPT_STATE_INVALID")
+                    conn.execute(
+                        "UPDATE branch_attempts SET finished_at=?,outcome='timed_out' WHERE branch_id=? AND attempt_number=?",
+                        (env["finished_at"], branch["branch_id"], attempt["attempt_number"]),
+                    )
             else:
                 conn.execute(
                     "UPDATE nodes SET status=?,envelope_json=? WHERE branch_id=?",
                     (new_status, json.dumps(env, sort_keys=True), args.branch_id),
                 )
-            return {"code": kind.upper().replace("-", "_") + "_RECORDED", "branch_id": args.branch_id, "branch_status": new_status}
+            promoted = [] if kind == "retry" else _promote_fanout_successors(conn, current["run_id"])
+            return {
+                "code": kind.upper().replace("-", "_") + "_RECORDED",
+                "branch_id": args.branch_id, "branch_status": new_status,
+                "promoted_branch_ids": promoted,
+            }
         if kind == "approval":
             if request["approval_id"] not in set(task["required_human_decisions"]):
                 raise StateError("UNEXPECTED_APPROVAL")
@@ -665,9 +745,88 @@ def _record_control(
     return store.mutate(connection, run["run_id"], op_id, request, action)
 
 
+def command_fanout_assessment(
+    args: argparse.Namespace, connection: sqlite3.Connection, run: sqlite3.Row,
+    policy: Mapping[str, Any], store: StateStore,
+) -> Dict[str, Any]:
+    snapshot = _manifest_snapshot(store, policy, run["run_id"], args.assessment_manifest, 256 * 1024)
+    authority_ref = validate_ref(args.authority_ref, "authority_ref")
+    request = {
+        "command": "record.fanout-assessment", "fanout_id": opaque(args.fanout_id, "fanout_id"),
+        "assessment_digest": snapshot.digest, "authority_ref": authority_ref,
+    }
+
+    def action(conn: sqlite3.Connection, current: sqlite3.Row, revision: int) -> Dict[str, Any]:
+        fanout = conn.execute(
+            "SELECT * FROM fanouts WHERE run_id=? AND fanout_id=?", (current["run_id"], args.fanout_id)
+        ).fetchone()
+        if fanout is None:
+            raise StateError("FANOUT_NOT_FOUND")
+        if fanout["status"] != "awaiting":
+            raise StateError("FANOUT_ASSESSMENT_EXISTS")
+        expected_members = json.loads(fanout["member_branch_ids_json"])
+        manifest = validate_fanout_assessment(snapshot.parsed, current["run_id"], fanout["fanout_id"], expected_members)
+        try:
+            dependencies = validate_fanout_ordering(manifest["members"], manifest["dependencies"])
+        except ValueError as error:
+            raise StateError(str(error))
+        verified_evidence = []
+        for item in manifest["evidence"]:
+            verified = resolve_reference(
+                item["ref"], item["sha256"], item["kind"], Path(current["repository_path"]),
+                Path(__file__).resolve().parents[1], policy, conn,
+            )
+            persist_artifact(conn, current["run_id"], verified)
+            verified_evidence.append({"kind": verified.kind, "ref": verified.ref, "sha256": verified.sha256})
+        assessed_at = utc_now()
+        actor = current_actor()
+        host_identity = current_host_identity()
+        canonical_manifest = dict(manifest)
+        canonical_manifest["dependencies"] = dependencies
+        canonical_manifest["evidence"] = sorted(verified_evidence, key=lambda item: (item["kind"], item["ref"]))
+        canonical_manifest.update({
+            "authority_ref": authority_ref, "actor": actor,
+            "host_identity": host_identity, "assessed_at": assessed_at,
+        })
+        artifact = canonical_ledger_artifact(fanout["fanout_id"], "evidence_manifest", canonical_manifest)
+        persist_artifact(conn, current["run_id"], artifact)
+        for dependency in dependencies:
+            conn.execute(
+                "INSERT INTO fanout_dependencies VALUES(?,?,?,?)",
+                (fanout["fanout_id"], dependency["before_branch_id"],
+                 dependency["after_branch_id"], dependency["reason"]),
+            )
+        assessment_input = artifact.as_input()
+        for branch_id_value in expected_members:
+            branch = conn.execute("SELECT * FROM nodes WHERE branch_id=?", (branch_id_value,)).fetchone()
+            if branch is None or branch["status"] != "pending":
+                raise StateError("FANOUT_MEMBER_INVALID")
+            env = json.loads(branch["envelope_json"])
+            env["inputs"] = sorted(env["inputs"] + [assessment_input], key=lambda item: (item["kind"], item["ref"]))
+            conn.execute(
+                "UPDATE nodes SET envelope_json=? WHERE branch_id=?",
+                (json.dumps(env, sort_keys=True), branch_id_value),
+            )
+        conn.execute(
+            """UPDATE fanouts SET status='assessed',assessment_ref=?,assessment_digest=?,authority_ref=?,
+            actor=?,host_identity=?,assessed_at=? WHERE fanout_id=?""",
+            (artifact.ref, artifact.sha256, authority_ref, actor, host_identity, assessed_at, fanout["fanout_id"]),
+        )
+        promoted = _promote_fanout_successors(conn, current["run_id"])
+        return {
+            "code": "FANOUT_ASSESSMENT_RECORDED", "fanout_id": fanout["fanout_id"],
+            "assessment_ref": artifact.ref, "assessment_digest": artifact.sha256,
+            "ready_branch_ids": promoted,
+        }
+
+    return store.mutate(connection, run["run_id"], opaque(args.op_id, "op_id"), request, action)
+
+
 def command_record(args: argparse.Namespace, connection: sqlite3.Connection, run: sqlite3.Row, policy: Mapping[str, Any], task: Mapping[str, Any], store: StateStore) -> Dict[str, Any]:
     if args.record_kind == "branch-result":
         return _record_branch_result(args, connection, run, policy, task, store)
+    if args.record_kind == "fanout-assessment":
+        return command_fanout_assessment(args, connection, run, policy, store)
     return _record_control(args, connection, run, policy, task, store)
 
 
@@ -736,6 +895,15 @@ def command_next(
                 execution_plan={"size": plan["size"], "plan_digest": plan["plan_digest"], "status": plan["status"]} if plan else None,
                 branches=[],
             )
+        awaiting = connection.execute(
+            "SELECT fanout_id FROM fanouts WHERE run_id=? AND status='awaiting' ORDER BY fanout_id LIMIT 1",
+            (run["run_id"],),
+        ).fetchone()
+        if awaiting:
+            return _json_result(
+                False, "FANOUT_ASSESSMENT_REQUIRED", run["run_id"], run["state_revision"],
+                fanout_id=awaiting["fanout_id"], branches=[],
+            )
         ready = _ready_envelopes(connection, run)
         selected = ready if args.all else ready[:1]
         code = "READY" if selected else "NOT_READY"
@@ -749,6 +917,12 @@ def command_next(
         ).fetchone()
         if plan is None or plan["status"] != "approved":
             raise StateError("EXECUTION_PLAN_APPROVAL_REQUIRED")
+        awaiting = conn.execute(
+            "SELECT fanout_id FROM fanouts WHERE run_id=? AND status='awaiting' ORDER BY fanout_id LIMIT 1",
+            (current["run_id"],),
+        ).fetchone()
+        if awaiting:
+            raise StateError("FANOUT_ASSESSMENT_REQUIRED")
         row = conn.execute(
             "SELECT * FROM nodes WHERE run_id=? AND status='ready' ORDER BY branch_id LIMIT 1",
             (current["run_id"],),
@@ -756,13 +930,36 @@ def command_next(
         if not row:
             raise StateError("CLAIM_CONFLICT")
         env = json.loads(row["envelope_json"])
+        dependency = conn.execute(
+            """SELECT 1 FROM fanout_dependencies d JOIN fanouts f ON f.fanout_id=d.fanout_id
+            JOIN nodes predecessor ON predecessor.branch_id=d.before_branch_id
+            WHERE f.run_id=? AND d.after_branch_id=? AND
+              NOT (predecessor.status IN ('succeeded','skipped') OR
+                (predecessor.status IN ('failed','timed_out') AND predecessor.retry_count>=predecessor.max_retries))
+            LIMIT 1""",
+            (current["run_id"], row["branch_id"]),
+        ).fetchone()
+        if dependency:
+            raise StateError("FANOUT_DEPENDENCY_STATE_INVALID")
         env["status"] = "running"
-        env["started_at"] = utc_now()
+        attempt_started = utc_now()
+        env["started_at"] = row["started_at"] or attempt_started
         env["attempt_id"] = "attempt-" + secrets.token_hex(12)
-        claim_token = secrets.token_urlsafe(32)
+        claim_token = "claim-" + secrets.token_urlsafe(32)
         env["claim_digest"] = _claim_token_digest(claim_token)
         env["lease_expires_at"] = utc_after(branch_lease_seconds(policy))
-        conn.execute("UPDATE nodes SET status='running',started_at=?,envelope_json=? WHERE branch_id=?", (env["started_at"], json.dumps(env, sort_keys=True), row["branch_id"]))
+        attempt_number = conn.execute(
+            "SELECT COALESCE(MAX(attempt_number),0)+1 FROM branch_attempts WHERE branch_id=?",
+            (row["branch_id"],),
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO branch_attempts(run_id,branch_id,attempt_number,attempt_id,claim_digest,started_at) VALUES(?,?,?,?,?,?)",
+            (current["run_id"], row["branch_id"], attempt_number, env["attempt_id"], env["claim_digest"], attempt_started),
+        )
+        conn.execute(
+            "UPDATE nodes SET status='running',started_at=COALESCE(started_at,?),envelope_json=? WHERE branch_id=?",
+            (attempt_started, json.dumps(env, sort_keys=True), row["branch_id"]),
+        )
         dispatch = dict(env)
         dispatch["claim_token"] = claim_token
         return {"code": "CLAIMED", "branch": dispatch}
@@ -797,7 +994,7 @@ def command_join_advance(args: argparse.Namespace, connection: sqlite3.Connectio
         validation = validate_join(conn, current, join)
         if validation["join_status"] != "READY":
             if validation["join_status"] == "BLOCKED":
-                conn.execute("UPDATE runs SET status='blocked',blocked_reason='MANDATORY_BRANCH_FAILED' WHERE run_id=?", (current["run_id"],))
+                conn.execute("UPDATE runs SET status='blocked',blocked_reason='MANDATORY_BRANCH_FAILED',finished_at=COALESCE(finished_at,?) WHERE run_id=?", (utc_now(), current["run_id"]))
                 return {"code": "GRAPH_BLOCKED", "status": "blocked", "reason": "MANDATORY_BRANCH_FAILED", "join_id": join["join_id"]}
             raise StateError(validation["join_status"])
         if join["kind"] == "closure":
@@ -816,6 +1013,8 @@ def command_join_advance(args: argparse.Namespace, connection: sqlite3.Connectio
         route = current["selected_route"]
         tags = json.loads(current["selected_tags_json"] or "[]")
         successor_ids: List[str] = []
+        created_join_ids: List[str] = []
+        created_fanout_ids: List[str] = []
         outcome: Optional[str] = None
         if join["kind"] == "collection":
             if collection_artifact is None or collection_manifest is None:
@@ -828,7 +1027,9 @@ def command_join_advance(args: argparse.Namespace, connection: sqlite3.Connectio
             inputs.append(collection_input)
             node = _insert_spec(store, conn, current, policy, task, spec, inputs)
             successor_ids.append(node["branch_id"])
-            _insert_join(store, conn, current, consolidation_join(join["stage"], join["generation"], spec))
+            created_join_ids.append(_insert_join(
+                store, conn, current, consolidation_join(join["stage"], join["generation"], spec)
+            )["join_id"])
         elif join["kind"] == "dependency":
             source = members[0]
             if join["stage"] == "design":
@@ -839,9 +1040,21 @@ def command_join_advance(args: argparse.Namespace, connection: sqlite3.Connectio
                 inputs = _context_inputs(conn, current, [source], include_design=True, include_implementation=True)
                 specs = delivery_review_nodes(policy, tags, join["generation"])
                 stage = "delivery"
+            successor_rows = []
+            successor_status = "pending" if len(specs) > 1 else "ready"
             for spec in specs:
-                successor_ids.append(_insert_spec(store, conn, current, policy, task, spec, inputs)["branch_id"])
-            _insert_join(store, conn, current, collection_join(stage, join["generation"], specs))
+                successor = _insert_spec(
+                    store, conn, current, policy, task, spec, inputs, status=successor_status
+                )
+                successor_rows.append(successor)
+                successor_ids.append(successor["branch_id"])
+            created_join_ids.append(_insert_join(
+                store, conn, current, collection_join(stage, join["generation"], specs)
+            )["join_id"])
+            if len(successor_rows) > 1:
+                created_fanout_ids.append(_insert_fanout(
+                    conn, current, stage, join["generation"], successor_rows
+                ))
         elif join["kind"] == "consolidation":
             consolidation = members[0]
             manifest = json.loads(consolidation["result_json"])
@@ -860,10 +1073,10 @@ def command_join_advance(args: argparse.Namespace, connection: sqlite3.Connectio
                 conn, current, [consolidation], include_design=True, include_implementation=True
             )
             if outcome == "BLOCK":
-                conn.execute("UPDATE runs SET status='blocked',blocked_reason='CONSOLIDATION_BLOCK' WHERE run_id=?", (current["run_id"],))
+                conn.execute("UPDATE runs SET status='blocked',blocked_reason='CONSOLIDATION_BLOCK',finished_at=COALESCE(finished_at,?) WHERE run_id=?", (utc_now(), current["run_id"]))
             elif join["stage"] == "design" and outcome == "REVISE":
                 if not _consume_loop_budget(conn, current["run_id"], "design_revisions"):
-                    conn.execute("UPDATE runs SET status='blocked',blocked_reason='DESIGN_REVISION_LIMIT' WHERE run_id=?", (current["run_id"],))
+                    conn.execute("UPDATE runs SET status='blocked',blocked_reason='DESIGN_REVISION_LIMIT',finished_at=COALESCE(finished_at,?) WHERE run_id=?", (utc_now(), current["run_id"]))
                     outcome = "BLOCK"
                 else:
                     generation = join["generation"] + 1
@@ -872,10 +1085,10 @@ def command_join_advance(args: argparse.Namespace, connection: sqlite3.Connectio
                     conn.execute("UPDATE runs SET design_generation=? WHERE run_id=?", (generation, current["run_id"]))
             elif join["stage"] == "design" and outcome == "APPROVE":
                 if route == "design_only":
-                    _insert_join(store, conn, current, closure_join(NodeSpec(
+                    created_join_ids.append(_insert_join(store, conn, current, closure_join(NodeSpec(
                         consolidation["node_key"], consolidation["role"], consolidation["stage"], consolidation["generation"],
                         bool(consolidation["mandatory"]), consolidation["specialist_tag"],
-                    ), join["generation"]))
+                    ), join["generation"]))["join_id"])
                 elif route in {"full_delivery", "fast_path"}:
                     generation = current["implementation_generation"]
                     spec = implementation_node(policy, generation)
@@ -884,7 +1097,7 @@ def command_join_advance(args: argparse.Namespace, connection: sqlite3.Connectio
                     raise StateError("ROUTE_TRANSITION_INVALID")
             elif join["stage"] == "delivery" and outcome == "REPAIR":
                 if not _consume_loop_budget(conn, current["run_id"], "delivery_repairs"):
-                    conn.execute("UPDATE runs SET status='blocked',blocked_reason='DELIVERY_REPAIR_LIMIT' WHERE run_id=?", (current["run_id"],))
+                    conn.execute("UPDATE runs SET status='blocked',blocked_reason='DELIVERY_REPAIR_LIMIT',finished_at=COALESCE(finished_at,?) WHERE run_id=?", (utc_now(), current["run_id"]))
                     outcome = "BLOCK"
                 else:
                     generation = current["implementation_generation"] + 1
@@ -893,7 +1106,7 @@ def command_join_advance(args: argparse.Namespace, connection: sqlite3.Connectio
                     conn.execute("UPDATE runs SET implementation_generation=? WHERE run_id=?", (generation, current["run_id"]))
             elif join["stage"] == "delivery" and outcome == "REDESIGN":
                 if not _consume_loop_budget(conn, current["run_id"], "design_revisions"):
-                    conn.execute("UPDATE runs SET status='blocked',blocked_reason='DESIGN_REVISION_LIMIT' WHERE run_id=?", (current["run_id"],))
+                    conn.execute("UPDATE runs SET status='blocked',blocked_reason='DESIGN_REVISION_LIMIT',finished_at=COALESCE(finished_at,?) WHERE run_id=?", (utc_now(), current["run_id"]))
                     outcome = "BLOCK"
                 else:
                     design_generation = current["design_generation"] + 1
@@ -902,11 +1115,15 @@ def command_join_advance(args: argparse.Namespace, connection: sqlite3.Connectio
                     successor_ids.append(_insert_spec(store, conn, current, policy, task, spec, delivery_context)["branch_id"])
                     conn.execute("UPDATE runs SET design_generation=?,implementation_generation=? WHERE run_id=?", (design_generation, implementation_generation, current["run_id"]))
             elif join["stage"] == "delivery" and outcome == "ACCEPT":
-                _insert_join(store, conn, current, closure_join(NodeSpec(
+                created_join_ids.append(_insert_join(store, conn, current, closure_join(NodeSpec(
                     consolidation["node_key"], consolidation["role"], consolidation["stage"], consolidation["generation"],
                     bool(consolidation["mandatory"]), consolidation["specialist_tag"],
-                ), join["generation"]))
-        return {"code": "JOIN_ADVANCED", "join_id": join["join_id"], "outcome": outcome, "successor_branch_ids": sorted(successor_ids)}
+                ), join["generation"]))["join_id"])
+        return {
+            "code": "JOIN_ADVANCED", "join_id": join["join_id"], "outcome": outcome,
+            "successor_branch_ids": sorted(successor_ids), "created_join_ids": sorted(created_join_ids),
+            "created_fanout_ids": sorted(created_fanout_ids),
+        }
 
     return store.mutate(connection, run["run_id"], op_id, request, action)
 
@@ -922,6 +1139,15 @@ def _next_action(connection: sqlite3.Connection, run: Mapping[str, Any]) -> Dict
             "kind": "await_execution_plan_approval",
             "size": plan["size"] if plan else None,
             "plan_digest": plan["plan_digest"] if plan else None,
+        }
+    awaiting = connection.execute(
+        "SELECT fanout_id,stage,generation FROM fanouts WHERE run_id=? AND status='awaiting' ORDER BY fanout_id LIMIT 1",
+        (run["run_id"],),
+    ).fetchone()
+    if awaiting:
+        return {
+            "kind": "record_fanout_assessment", "fanout_id": awaiting["fanout_id"],
+            "stage": awaiting["stage"], "generation": awaiting["generation"],
         }
     ready = connection.execute("SELECT branch_id FROM nodes WHERE run_id=? AND status='ready' ORDER BY branch_id LIMIT 1", (run["run_id"],)).fetchone()
     if ready:
@@ -951,12 +1177,17 @@ def _next_action(connection: sqlite3.Connection, run: Mapping[str, Any]) -> Dict
 
 
 def command_status(connection: sqlite3.Connection, run: sqlite3.Row) -> Dict[str, Any]:
-    branches = connection.execute("SELECT branch_id,node_key,role,generation,status,retry_count,max_retries,envelope_json FROM nodes WHERE run_id=? ORDER BY branch_id", (run["run_id"],)).fetchall()
+    branches = connection.execute("SELECT * FROM nodes WHERE run_id=? ORDER BY branch_id", (run["run_id"],)).fetchall()
     joins = connection.execute("SELECT join_id,join_key,kind,generation,status,degraded FROM joins WHERE run_id=? ORDER BY join_id", (run["run_id"],)).fetchall()
     budgets = connection.execute("SELECT budget_id,limit_value,used FROM budgets WHERE run_id=? ORDER BY budget_id", (run["run_id"],)).fetchall()
     approvals = connection.execute("SELECT a.approval_id,a.scope_ref,a.decision,a.authority_ref,a.artifact_sha256,aa.actor,aa.approved_at FROM approvals a JOIN approval_attestations aa ON aa.run_id=a.run_id AND aa.approval_id=a.approval_id WHERE a.run_id=? ORDER BY a.approval_id", (run["run_id"],)).fetchall()
     acceptance = connection.execute("SELECT criterion_id,artifact_ref,artifact_sha256 FROM acceptance_evidence WHERE run_id=? ORDER BY criterion_id", (run["run_id"],)).fetchall()
     checks = connection.execute("SELECT check_id,outcome,artifact_ref,artifact_sha256 FROM check_evidence WHERE run_id=? ORDER BY check_id", (run["run_id"],)).fetchall()
+    fanouts = connection.execute(
+        "SELECT fanout_id,stage,generation,status,member_branch_ids_json,assessment_ref,assessment_digest,authority_ref,actor,host_identity,assessed_at FROM fanouts WHERE run_id=? ORDER BY fanout_id",
+        (run["run_id"],),
+    ).fetchall()
+    timing = compute_timing(connection, run)
     plan = connection.execute("SELECT * FROM execution_plans WHERE run_id=?", (run["run_id"],)).fetchone()
     execution_plan = None
     if plan:
@@ -982,17 +1213,24 @@ def command_status(connection: sqlite3.Connection, run: sqlite3.Row) -> Dict[str
         branches=[
             {
                 "branch_id": row["branch_id"], "node_key": row["node_key"], "role": row["role"],
+                "stage": row["stage"], "specialist_tag": row["specialist_tag"],
                 "generation": row["generation"], "status": row["status"],
                 "retry_count": row["retry_count"], "max_retries": row["max_retries"],
                 "model": json.loads(row["envelope_json"]).get("model"),
                 "reasoning_effort": json.loads(row["envelope_json"]).get("reasoning_effort"),
                 "attempt_id": json.loads(row["envelope_json"]).get("attempt_id"),
                 "lease_expires_at": json.loads(row["envelope_json"]).get("lease_expires_at"),
+                **timing["branches"][row["branch_id"]],
             }
             for row in branches
         ], joins=[dict(row) for row in joins],
         budgets=[dict(row) for row in budgets], approvals=[dict(row) for row in approvals],
         acceptance_evidence=[dict(row) for row in acceptance], check_evidence=[dict(row) for row in checks],
+        fanouts=[{
+            **{key: row[key] for key in row.keys() if key != "member_branch_ids_json"},
+            "member_branch_ids": json.loads(row["member_branch_ids_json"]),
+        } for row in fanouts],
+        timing={key: value for key, value in timing.items() if key != "branches"},
         next_action=_next_action(connection, run), blocked_reason=run["blocked_reason"],
     )
 
@@ -1032,7 +1270,10 @@ def command_complete(args: argparse.Namespace, connection: sqlite3.Connection, r
         if not set(task["required_human_decisions"]).issubset(approved):
             raise StateError("REQUIRED_APPROVALS_INCOMPLETE")
         conn.execute("UPDATE joins SET status='sealed',result_json=? WHERE join_id=?", (json.dumps({"complete": True}), closure["join_id"]))
-        conn.execute("UPDATE runs SET status='complete' WHERE run_id=?", (current["run_id"],))
+        conn.execute(
+            "UPDATE runs SET status='complete',finished_at=COALESCE(finished_at,?) WHERE run_id=?",
+            (utc_now(), current["run_id"]),
+        )
         return {"code": "COMPLETE", "status": "complete"}
 
     return store.mutate(connection, run["run_id"], opaque(args.op_id, "op_id"), request, action)
@@ -1088,7 +1329,10 @@ def command_run_control(args: argparse.Namespace, connection: sqlite3.Connection
             manifest["evidence"] = verified_items
             block_artifact = canonical_ledger_artifact("block-" + args.op_id, "evidence_manifest", manifest)
             persist_artifact(conn, current["run_id"], block_artifact)
-        conn.execute("UPDATE runs SET status=?,blocked_reason=? WHERE run_id=?", (target, request["reason_code"], current["run_id"]))
+        conn.execute(
+            "UPDATE runs SET status=?,blocked_reason=?,finished_at=COALESCE(finished_at,?) WHERE run_id=?",
+            (target, request["reason_code"], utc_now(), current["run_id"]),
+        )
         return {"code": code, "status": target}
 
     return store.mutate(connection, run["run_id"], opaque(args.op_id, "op_id"), request, action)
@@ -1116,6 +1360,7 @@ def build_parser() -> argparse.ArgumentParser:
     heartbeat = records.add_parser("heartbeat"); heartbeat.add_argument("--run-id", required=True); heartbeat.add_argument("--branch-id", required=True); heartbeat.add_argument("--attempt-id", required=True); heartbeat.add_argument("--claim-token", required=True); heartbeat.add_argument("--op-id", required=True)
     approval = records.add_parser("approval"); approval.add_argument("--run-id", required=True); approval.add_argument("--approval-id", required=True); approval.add_argument("--scope-ref", required=True); approval.add_argument("--decision", choices=["APPROVE", "REJECT"], required=True); approval.add_argument("--authority-ref", required=True); approval.add_argument("--artifact-sha256", required=True); approval.add_argument("--actor"); approval.add_argument("--op-id", required=True)
     plan_approval = records.add_parser("plan-approval"); plan_approval.add_argument("--run-id", required=True); plan_approval.add_argument("--plan-digest", required=True); plan_approval.add_argument("--decision", choices=["APPROVE", "REJECT"], required=True); plan_approval.add_argument("--authority-ref", required=True); plan_approval.add_argument("--actor"); plan_approval.add_argument("--op-id", required=True)
+    fanout_assessment = records.add_parser("fanout-assessment"); fanout_assessment.add_argument("--run-id", required=True); fanout_assessment.add_argument("--fanout-id", required=True); fanout_assessment.add_argument("--assessment-manifest", required=True); fanout_assessment.add_argument("--authority-ref", required=True); fanout_assessment.add_argument("--op-id", required=True)
     budget = records.add_parser("budget-use"); budget.add_argument("--run-id", required=True); budget.add_argument("--budget-id", required=True); budget.add_argument("--amount", type=int, required=True); budget.add_argument("--source-branch-id", required=True); budget.add_argument("--op-id", required=True)
     acceptance = records.add_parser("acceptance-evidence"); acceptance.add_argument("--run-id", required=True); acceptance.add_argument("--criterion-id", required=True); acceptance.add_argument("--artifact-ref", required=True); acceptance.add_argument("--artifact-sha256", required=True); acceptance.add_argument("--op-id", required=True)
     check = records.add_parser("check-evidence"); check.add_argument("--run-id", required=True); check.add_argument("--check-id", required=True); check.add_argument("--outcome", choices=["PASS", "FAIL", "NOT_RUN"], required=True); check.add_argument("--artifact-ref", required=True); check.add_argument("--artifact-sha256", required=True); check.add_argument("--op-id", required=True)
@@ -1173,7 +1418,7 @@ def execute(argv: Optional[Sequence[str]] = None, store: Optional[StateStore] = 
             result = command_status(connection, run)
         else:
             result = command_run_control(args, connection, run, stored_policy, task, state)
-    if result["code"] == "NOT_READY":
+    if result["code"] in {"NOT_READY", "FANOUT_ASSESSMENT_REQUIRED"}:
         return result, 2
     if result["code"] in {"GRAPH_BLOCKED", "EXECUTION_PLAN_REJECTED"}:
         return result, 3
@@ -1189,9 +1434,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         conflict = error.code in {
             "OPERATION_CONFLICT", "TRANSACTION_CONFLICT", "CLAIM_CONFLICT",
             "INITIALIZATION_CONFLICT", "RUN_ALREADY_EXISTS", "INCOMPLETE_INIT_CONFLICT",
+            "FANOUT_ASSESSMENT_EXISTS", "FANOUT_IMMUTABLE", "FANOUT_DEPENDENCY_IMMUTABLE",
         }
         blocked = error.code in {"GRAPH_BLOCKED", "RETRY_LIMIT", "BUDGET_LIMIT"}
-        not_ready = error.code in {"NOT_READY", "RETRY_REQUIRED", "EXECUTION_PLAN_APPROVAL_REQUIRED"}
+        not_ready = error.code in {"NOT_READY", "RETRY_REQUIRED", "EXECUTION_PLAN_APPROVAL_REQUIRED", "FANOUT_ASSESSMENT_REQUIRED"}
         result = _json_result(False, error.code, None, None)
         exit_code = 5 if conflict else 3 if blocked else 2 if not_ready else 4
     except (OSError, sqlite3.Error):

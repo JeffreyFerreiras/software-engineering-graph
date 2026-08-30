@@ -1,16 +1,43 @@
 # Standalone Software Engineering Graph source repository
 
 > Current status: the original source-copy design below is historical. The local graph engine now
-> includes attempt fencing, expiring leases and heartbeats, provider-produced check receipts, local
+> includes immutable attempt history, expiring leases and heartbeats, provider-produced check receipts, local
 > approval attestations, configurable check commands, and a deterministic critical-risk security
 > floor. Each run also creates a human-approved T-shirt-sized execution plan with model and reasoning
 > effort assignments before branch claims. The source checkout still does not implement a model-provider
-> agent dispatcher or CI.
+> agent dispatcher or CI. Schema 5 also requires an immutable Supervisor resource assessment before
+> every multi-member fixed review fan-out and derives deterministic timing metrics from attempt history.
 
 ## Design status
 
-IMPLEMENTED local hardening and human-approved dynamic execution planning; source-copy sections retained
+IMPLEMENTED schema-5 graph reconstruction, resource-safe fixed fan-outs, timing, and human-approved
+dynamic execution planning; source-copy sections retained
 as historical context.
+
+## Current schema-5 operation
+
+The validator reconstructs the exact legal graph from the mandatory Impact Mapper result, durable
+terminal results, sealed joins, and `JOIN_ADVANCED` operation witnesses. Missing or extra nodes,
+joins, member edges, successors, provenance inputs, fan-outs, or ordering edges fail closed. Open joins
+cannot have successors; blocked and aborted runs retain all topology already created; completion requires
+one sealed closure. Schema 2 through 4 databases are unsupported and are never migrated in place.
+
+Every fixed review expansion with more than one member starts as one persisted `awaiting` fan-out.
+The Supervisor records one immutable, evidence-backed assessment covering repo-relative exact and
+subtree writable paths, mutable-state references, exclusive devices, and constrained service units and
+capacity for every member. Exclusive conflicts must be transitively ordered, service use in every
+unordered antichain must fit one agreed capacity, and cycles, self-edges, duplicates, replacements, and
+partial member sets are rejected. Independent roots promote together; an ordered successor promotes in
+the same transaction that settles its predecessors. Retryable failure remains unsettled. This policy
+orders only the engine's fixed topology and is not a general DAG facility or worker executor.
+
+Claims create immutable branch-attempt rows. Results and timeouts finish exactly one attempt; retries
+retain the branch lifecycle start and create a new attempt on the next claim. Status derives integer UTC
+microsecond intervals and floors only final millisecond values. Branch active time sums closed attempts;
+retry waits count only in branch wall time. Stage overlap measures half-open intervals with at least two
+active attempts. Slowest-branch ties use lexical branch ID. Critical path uses semantic join-successor
+and fan-out ordering edges with active time as node weight, zero-weight joins, and lexical full-path ties.
+Incomplete active metrics remain null, while a terminal run's wall time remains exact.
 
 ## Historical source-copy design
 

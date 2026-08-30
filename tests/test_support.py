@@ -108,18 +108,52 @@ class GraphCase(unittest.TestCase):
         }
         if branch is not None:
             manifest["branch_id"] = branch["branch_id"]
+            if kind == "timeout" and branch.get("attempt_id") and branch.get("claim_token"):
+                manifest["attempt_id"] = branch["attempt_id"]
+                manifest["claim_digest"] = sha256_bytes(branch["claim_token"].encode("utf-8"))
         return self.inbox_manifest(manifest)
 
     def claim(self) -> Dict[str, Any]:
+        status = self.graphctl("status", "--run-id", "RUN-1")
+        if status["next_action"]["kind"] == "record_fanout_assessment":
+            self.assess_fanout(status["next_action"]["fanout_id"])
         self.counter += 1
         return self.graphctl("next", "--run-id", "RUN-1", "--claim", "--op-id", f"claim-{self.counter}")["branch"]
 
     def record(self, branch: Dict[str, Any], manifest: Dict[str, Any]) -> Dict[str, Any]:
         self.counter += 1
+        manifest = dict(manifest)
+        manifest["attempt_id"] = branch["attempt_id"]
+        manifest["claim_digest"] = sha256_bytes(branch["claim_token"].encode("utf-8"))
         path = self.inbox_manifest(manifest)
         return self.graphctl(
             "record", "branch-result", "--run-id", "RUN-1", "--branch-id", branch["branch_id"],
+            "--attempt-id", branch["attempt_id"], "--claim-token", branch["claim_token"],
             "--result-manifest", str(path), "--op-id", f"result-{self.counter}",
+        )
+
+    def assess_fanout(self, fanout_id: str, dependencies: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
+        status = self.graphctl("status", "--run-id", "RUN-1")
+        fanout = next(item for item in status["fanouts"] if item["fanout_id"] == fanout_id)
+        evidence = self.repo_artifact("finding", "fanout-evidence-" + str(self.counter))
+        manifest = {
+            "schema_version": 1, "kind": "fanout_assessment", "run_id": "RUN-1",
+            "fanout_id": fanout_id,
+            "members": [{
+                "branch_id": branch_id,
+                "resources": {
+                    "writable_paths": [], "mutable_state_refs": [],
+                    "exclusive_device_refs": [], "services": [],
+                },
+            } for branch_id in fanout["member_branch_ids"]],
+            "dependencies": dependencies or [], "evidence": [evidence],
+        }
+        self.counter += 1
+        path = self.inbox_manifest(manifest)
+        return self.graphctl(
+            "record", "fanout-assessment", "--run-id", "RUN-1", "--fanout-id", fanout_id,
+            "--assessment-manifest", str(path), "--authority-ref", "authority:test",
+            "--op-id", "fanout-assessment-" + str(self.counter),
         )
 
     def impact(self, route: str, tags: Optional[List[str]] = None) -> None:

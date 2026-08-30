@@ -39,6 +39,7 @@ CREATE TABLE runs (
   journal_mode TEXT NOT NULL, synchronous TEXT NOT NULL, sqlite_version TEXT NOT NULL,
   local_filesystem TEXT NOT NULL, host_identity TEXT NOT NULL, database_device INTEGER,
   database_inode INTEGER, blocked_reason TEXT, authoritative INTEGER NOT NULL
+  ,started_at TEXT NOT NULL, finished_at TEXT
 );
 CREATE TABLE execution_plans (
   run_id TEXT PRIMARY KEY REFERENCES runs(run_id), size TEXT NOT NULL,
@@ -106,6 +107,71 @@ CREATE TABLE artifacts (
   source_path TEXT, content_json TEXT, device INTEGER, inode INTEGER, immutable INTEGER NOT NULL,
   UNIQUE(run_id,kind,sha256,ref)
 );
+CREATE TABLE fanouts (
+  fanout_id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE RESTRICT,
+  stage TEXT NOT NULL, generation INTEGER NOT NULL CHECK(generation>=0),
+  status TEXT NOT NULL CHECK(status IN ('awaiting','assessed')),
+  member_branch_ids_json TEXT NOT NULL,
+  assessment_ref TEXT REFERENCES artifacts(ref) ON DELETE RESTRICT,
+  assessment_digest TEXT, authority_ref TEXT, actor TEXT, host_identity TEXT, assessed_at TEXT,
+  UNIQUE(run_id,stage,generation),
+  CHECK(
+    (status='awaiting' AND assessment_ref IS NULL AND assessment_digest IS NULL AND authority_ref IS NULL
+      AND actor IS NULL AND host_identity IS NULL AND assessed_at IS NULL)
+    OR
+    (status='assessed' AND assessment_ref IS NOT NULL AND assessment_digest IS NOT NULL
+      AND authority_ref IS NOT NULL AND actor IS NOT NULL AND host_identity IS NOT NULL AND assessed_at IS NOT NULL)
+  )
+);
+CREATE TABLE fanout_dependencies (
+  fanout_id TEXT NOT NULL REFERENCES fanouts(fanout_id) ON DELETE RESTRICT,
+  before_branch_id TEXT NOT NULL REFERENCES nodes(branch_id) ON DELETE RESTRICT,
+  after_branch_id TEXT NOT NULL REFERENCES nodes(branch_id) ON DELETE RESTRICT,
+  reason TEXT NOT NULL,
+  PRIMARY KEY(fanout_id,before_branch_id,after_branch_id),
+  CHECK(before_branch_id<>after_branch_id)
+);
+CREATE TABLE branch_attempts (
+  run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE RESTRICT,
+  branch_id TEXT NOT NULL REFERENCES nodes(branch_id) ON DELETE RESTRICT,
+  attempt_number INTEGER NOT NULL CHECK(attempt_number>0), attempt_id TEXT NOT NULL,
+  claim_digest TEXT NOT NULL CHECK(length(claim_digest)=64), started_at TEXT NOT NULL,
+  finished_at TEXT, outcome TEXT,
+  PRIMARY KEY(branch_id,attempt_number), UNIQUE(run_id,attempt_id),
+  CHECK((finished_at IS NULL AND outcome IS NULL) OR (finished_at IS NOT NULL AND outcome IS NOT NULL))
+);
+CREATE TRIGGER fanout_transition_guard BEFORE UPDATE ON fanouts
+BEGIN
+  SELECT CASE
+    WHEN OLD.status<>'awaiting' OR NEW.status<>'assessed'
+      OR OLD.fanout_id<>NEW.fanout_id OR OLD.run_id<>NEW.run_id OR OLD.stage<>NEW.stage
+      OR OLD.generation<>NEW.generation OR OLD.member_branch_ids_json<>NEW.member_branch_ids_json
+    THEN RAISE(ABORT,'FANOUT_IMMUTABLE')
+  END;
+END;
+CREATE TRIGGER fanout_insert_guard BEFORE INSERT ON fanouts WHEN NEW.status<>'awaiting'
+BEGIN SELECT RAISE(ABORT,'FANOUT_IMMUTABLE'); END;
+CREATE TRIGGER fanout_delete_guard BEFORE DELETE ON fanouts
+BEGIN SELECT RAISE(ABORT,'FANOUT_IMMUTABLE'); END;
+CREATE TRIGGER fanout_dependency_update_guard BEFORE UPDATE ON fanout_dependencies
+BEGIN SELECT RAISE(ABORT,'FANOUT_DEPENDENCY_IMMUTABLE'); END;
+CREATE TRIGGER fanout_dependency_insert_guard BEFORE INSERT ON fanout_dependencies
+WHEN (SELECT status FROM fanouts WHERE fanout_id=NEW.fanout_id)<>'awaiting'
+BEGIN SELECT RAISE(ABORT,'FANOUT_DEPENDENCY_IMMUTABLE'); END;
+CREATE TRIGGER fanout_dependency_delete_guard BEFORE DELETE ON fanout_dependencies
+BEGIN SELECT RAISE(ABORT,'FANOUT_DEPENDENCY_IMMUTABLE'); END;
+CREATE TRIGGER branch_attempt_identity_guard BEFORE UPDATE ON branch_attempts
+BEGIN
+  SELECT CASE
+    WHEN OLD.run_id<>NEW.run_id OR OLD.branch_id<>NEW.branch_id
+      OR OLD.attempt_number<>NEW.attempt_number OR OLD.attempt_id<>NEW.attempt_id
+      OR OLD.claim_digest<>NEW.claim_digest OR OLD.started_at<>NEW.started_at
+      OR OLD.finished_at IS NOT NULL OR (NEW.finished_at IS NULL)<>(NEW.outcome IS NULL)
+    THEN RAISE(ABORT,'ATTEMPT_IMMUTABLE')
+  END;
+END;
+CREATE TRIGGER branch_attempt_delete_guard BEFORE DELETE ON branch_attempts
+BEGIN SELECT RAISE(ABORT,'ATTEMPT_IMMUTABLE'); END;
 """
 
 MUTATION_RUN_STATES = {
@@ -120,6 +186,7 @@ MUTATION_RUN_STATES = {
     "record.budget-use": {"initialized", "active"},
     "record.acceptance-evidence": {"active"},
     "record.check-evidence": {"active"},
+    "record.fanout-assessment": {"active"},
     "check.run": {"active"},
     "join.advance": {"active"},
     "complete": {"active"},
@@ -523,8 +590,8 @@ class StateStore:
                 task_ref,task_path,task_json,request_mode,minimum_route,durability,durability_detail,
                 permission_verification,degraded_permissions_ack,degraded_durability_ack,journal_mode,
                 synchronous,sqlite_version,local_filesystem,host_identity,database_device,database_inode,
-                authoritative) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                row,
+                authoritative,started_at,finished_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                row + (utc_now(), None),
             )
             connection.execute(
                 "INSERT INTO execution_plans(run_id,size,plan_json,plan_digest,status) VALUES(?,?,?,?,?)",

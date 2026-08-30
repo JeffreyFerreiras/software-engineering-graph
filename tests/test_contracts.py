@@ -10,7 +10,7 @@ from graph_engine.config import (
 from graph_engine.contracts import ContractError, validate_impact_map, validate_ref, validate_task_brief
 from graph_engine.ids import sha256_bytes
 
-from test_support import GraphCase
+from tests.test_support import GraphCase
 
 
 class ContractTests(GraphCase):
@@ -25,12 +25,12 @@ class ContractTests(GraphCase):
     def test_mapper_cannot_downgrade_or_remove_tag(self):
         task = validate_task_brief(self.task(tags=["security_privacy"]), self.snapshot.digest, self.policy)
         with self.assertRaisesRegex(ContractError, "ROUTE_DOWNGRADE"):
-            validate_impact_map({"schema_version": 1, "task_id": "TASK-1", "route_label": "fast_path", "impact_tags": ["security_privacy"], "evidence_refs": []}, task, self.policy)
+            validate_impact_map({"schema_version": 1, "task_id": "TASK-1", "route_label": "fast_path", "impact_tags": ["security_privacy"], "evidence_refs": [], "attempt_id": "attempt", "claim_digest": "a" * 64}, task, self.policy)
         with self.assertRaisesRegex(ContractError, "MANDATORY_TAG_REMOVED"):
-            validate_impact_map({"schema_version": 1, "task_id": "TASK-1", "route_label": "full_delivery", "impact_tags": [], "evidence_refs": []}, task, self.policy)
+            validate_impact_map({"schema_version": 1, "task_id": "TASK-1", "route_label": "full_delivery", "impact_tags": [], "evidence_refs": [], "attempt_id": "attempt", "claim_digest": "a" * 64}, task, self.policy)
         fast_task = validate_task_brief(self.task(route="fast_path"), self.snapshot.digest, self.policy)
         with self.assertRaisesRegex(ContractError, "FAST_PATH_INVARIANT"):
-            validate_impact_map({"schema_version": 1, "task_id": "TASK-1", "route_label": "fast_path", "impact_tags": ["security_privacy"], "evidence_refs": []}, fast_task, self.policy)
+            validate_impact_map({"schema_version": 1, "task_id": "TASK-1", "route_label": "fast_path", "impact_tags": ["security_privacy"], "evidence_refs": [], "attempt_id": "attempt", "claim_digest": "a" * 64}, fast_task, self.policy)
 
     def test_advisory_task_cannot_receive_write_authority(self):
         task = self.task("advisory", "advisory")
@@ -76,7 +76,7 @@ class ContractTests(GraphCase):
         (self.repo / ".codex" / "engineering-graph.json").write_text(
             json.dumps(policy), encoding="utf-8"
         )
-        with self.assertRaisesRegex(ContractError, "ENGINE_COMMAND_SET_CHANGED"):
+        with self.assertRaisesRegex(ContractError, "ENGINE_COMMAND_SET_CHANGED|ENGINE_AUTHORITY_EXCEEDED"):
             load_policy(self.repo)
         from graph_engine.config import ENGINE_ROLE_CAPABILITIES
         self.assertNotIn(("command", "run", "*"), ENGINE_ROLE_CAPABILITIES["senior_engineer"])
@@ -89,7 +89,7 @@ class ContractTests(GraphCase):
         if os.name != "nt":
             os.chmod(oversized, 0o600)
         with self.assertRaisesRegex(ContractError, "FILE_TOO_LARGE"):
-            self.graphctl("record", "branch-result", "--run-id", "RUN-1", "--branch-id", branch["branch_id"], "--result-manifest", str(oversized), "--op-id", "oversized-1")
+            self.graphctl("record", "branch-result", "--run-id", "RUN-1", "--branch-id", branch["branch_id"], "--attempt-id", branch["attempt_id"], "--claim-token", branch["claim_token"], "--result-manifest", str(oversized), "--op-id", "oversized-1")
 
     def test_repository_policy_reaches_required_roles_and_checks(self):
         roles = {item["role"] for item in self.policy["node_templates"].values()}

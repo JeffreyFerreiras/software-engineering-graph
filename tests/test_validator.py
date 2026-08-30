@@ -1,7 +1,7 @@
 from graph_engine.contracts import ContractError
 from graph_engine.validator import compute_delivery_outcome, compute_design_outcome, validate_consolidation_manifest
 
-from test_support import GraphCase
+from tests.test_support import GraphCase
 
 
 class ValidatorTests(GraphCase):

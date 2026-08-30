@@ -1,5 +1,6 @@
 import json
 import io
+import sys
 from pathlib import Path
 from contextlib import redirect_stdout
 from unittest.mock import patch
@@ -10,10 +11,18 @@ from graph_engine.evidence import canonical_ledger_artifact
 from graph_engine.validator import canonical_collection_members, join_members
 from graph_engine.state import StateError, StateStore
 
-from test_support import GraphCase
+from tests.test_support import GraphCase
 
 
 class CliGoldenTraceTests(GraphCase):
+    def setUp(self):
+        super().setUp()
+        policy_path = self.repo / ".codex" / "engineering-graph.json"
+        policy = json.loads(policy_path.read_text(encoding="utf-8"))
+        policy["required_checks"]["repo-check"]["argv"] = [sys.executable, "-c", "import sys; sys.exit(0)"]
+        policy_path.write_text(json.dumps(policy), encoding="utf-8")
+        self.policy_bytes = policy_path.read_bytes()
+
     def _design_to_reviews(self, mode="delivery", route="full_delivery"):
         self.initialize(mode, route)
         self.impact(route)
@@ -156,6 +165,8 @@ class CliGoldenTraceTests(GraphCase):
         engineer = self.claim(); self.assertEqual(engineer["role"], "senior_engineer")
         self.success(engineer, "IMPLEMENTED")
         self.advance("implementation")
+        fanout = self.graphctl("status", "--run-id", "RUN-1")["fanouts"][0]
+        self.assess_fanout(fanout["fanout_id"])
         ready = self.graphctl("ready", "--run-id", "RUN-1")["branches"]
         self.assertEqual({branch["role"] for branch in ready}, {"code_reviewer", "test_engineer"})
 
@@ -268,9 +279,8 @@ class CliGoldenTraceTests(GraphCase):
         with self.assertRaisesRegex(StateError, "ACCEPTANCE_EVIDENCE_INCOMPLETE"):
             self.graphctl("complete", "--run-id", "RUN-1", "--op-id", "complete-too-early")
         acceptance = self.repo_artifact("acceptance_evidence", "acceptance")
-        check = self.repo_artifact("check_evidence", "check")
         self.graphctl("record", "acceptance-evidence", "--run-id", "RUN-1", "--criterion-id", "AC-001", "--artifact-ref", acceptance["ref"], "--artifact-sha256", acceptance["sha256"], "--op-id", "acceptance-1")
-        self.graphctl("record", "check-evidence", "--run-id", "RUN-1", "--check-id", "repo-check", "--outcome", "PASS", "--artifact-ref", check["ref"], "--artifact-sha256", check["sha256"], "--op-id", "check-1")
+        self.graphctl("check", "run", "--run-id", "RUN-1", "--check-id", "repo-check", "--op-id", "check-1")
         result = self.graphctl("complete", "--run-id", "RUN-1", "--op-id", "complete-1")
         self.assertEqual(result["status"], "complete")
         replay = self.graphctl("complete", "--run-id", "RUN-1", "--op-id", "complete-1")
@@ -337,7 +347,7 @@ class CliGoldenTraceTests(GraphCase):
         self._design_to_reviews()
         architect = self.claim()
         manifest = self.control_manifest("timeout", "DEADLINE", architect)
-        self.graphctl("record", "timeout", "--run-id", "RUN-1", "--branch-id", architect["branch_id"], "--reason-code", "DEADLINE", "--evidence-manifest", str(manifest), "--op-id", "timeout-1")
+        self.graphctl("record", "timeout", "--run-id", "RUN-1", "--branch-id", architect["branch_id"], "--attempt-id", architect["attempt_id"], "--claim-token", architect["claim_token"], "--reason-code", "DEADLINE", "--evidence-manifest", str(manifest), "--op-id", "timeout-1")
         collected = self.advance("design_collection")
         self.assertEqual(collected["code"], "JOIN_ADVANCED")
         db = self.store.db_path("albanian-live-translate", "RUN-1")
@@ -363,13 +373,14 @@ class CliGoldenTraceTests(GraphCase):
         failure_evidence = self.repo_artifact("failure", "specialist-failure")
         self.record(failed, {
             "schema_version": 1, "run_id": "RUN-1", "branch_id": failed["branch_id"],
-            "status": "failed", "output_kind": "specialist_review",
+            "status": "failed", "output_kind": failed["output_contract"]["artifact_kind"],
             "failure_code": "TOOL_FAILURE", "evidence": [failure_evidence],
         })
         timed_out = self.claim()
         timeout_manifest = self.control_manifest("timeout", "DEADLINE", timed_out)
         self.graphctl(
             "record", "timeout", "--run-id", "RUN-1", "--branch-id", timed_out["branch_id"],
+            "--attempt-id", timed_out["attempt_id"], "--claim-token", timed_out["claim_token"],
             "--reason-code", "DEADLINE", "--evidence-manifest", str(timeout_manifest),
             "--op-id", "restart-timeout",
         )
@@ -499,7 +510,10 @@ class CliGoldenTraceTests(GraphCase):
             "evidence": [evidence],
         }
         path = self.inbox_manifest(manifest, "mapper-failure.json")
-        args = ("record", "branch-result", "--run-id", "RUN-1", "--branch-id", mapper["branch_id"], "--result-manifest", str(path), "--op-id", "mapper-failed")
+        manifest["attempt_id"] = mapper["attempt_id"]
+        manifest["claim_digest"] = __import__("graph_engine.ids", fromlist=["sha256_bytes"]).sha256_bytes(mapper["claim_token"].encode("utf-8"))
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        args = ("record", "branch-result", "--run-id", "RUN-1", "--branch-id", mapper["branch_id"], "--attempt-id", mapper["attempt_id"], "--claim-token", mapper["claim_token"], "--result-manifest", str(path), "--op-id", "mapper-failed")
         first = self.graphctl(*args)
         replay = self.graphctl(*args)
         self.assertEqual((first["branch_status"], replay["code"], replay["state_revision"]), ("failed", "REPLAYED", first["state_revision"]))
@@ -562,6 +576,8 @@ class CliGoldenTraceTests(GraphCase):
 
         code, initialized = invoke("--ack-degraded-permissions", "--ack-degraded-durability", "init", "--run-id", "RUN-1", "--task-brief", str(task_path), "--op-id", "cli-init")
         self.assertEqual((code, initialized["code"]), (0, "INITIALIZED"))
+        code, _ = invoke("record", "plan-approval", "--run-id", "RUN-1", "--plan-digest", initialized["execution_plan_digest"], "--decision", "APPROVE", "--authority-ref", "authority:test", "--op-id", "cli-plan-approval")
+        self.assertEqual(code, 0)
         code, _ = invoke("next", "--run-id", "RUN-1", "--claim", "--op-id", "cli-claim")
         self.assertEqual(code, 0)
         code, waiting = invoke("next", "--run-id", "RUN-1", "--all")
