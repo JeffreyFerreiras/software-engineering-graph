@@ -1,6 +1,6 @@
 ---
 name: software-engineering-graph
-description: Orchestrate rigorous software application work through a supervisor, tech lead, architect, senior engineer, code reviewer, and test engineer with bounded design and delivery loops. Use when a user requests graph engineering, a multi-agent software organization, technical-design approval, independent implementation review and testing, or when repository instructions require this workflow for non-trivial features, fixes, refactors, migrations, integrations, or production changes.
+description: Orchestrate rigorous software application work through a scope-selected supervisor, tech lead, architect, senior engineer, code reviewer, and test engineer with bounded design and delivery loops. Use when a user requests graph engineering, a multi-agent software organization, technical-design approval, independent implementation review and testing, or when repository instructions require this workflow for non-trivial features, fixes, refactors, migrations, integrations, or production changes.
 ---
 
 # Software Engineering Graph
@@ -55,7 +55,7 @@ degraded mode is acceptable. These flags acknowledge platform limitations; they 
 
 ## Operating model
 
-Treat the primary agent as the Supervisor. Keep requirements, decisions, approvals, and user communication in the primary thread. Delegate bounded work to named role agents, then synthesize their results.
+Treat the primary agent as the Supervisor. Keep requirements, decisions, approvals, and user communication in the primary thread. Delegate bounded work to the smallest set of pertinent named role agents, then synthesize their results. The full engineering graph is an available route, not a default requirement.
 
 Follow applicable repository instructions before this workflow. Let the repository define architecture, risk triggers, commands, specialists, and completion gates. Do not let this skill expand the user's requested scope or authority.
 
@@ -89,7 +89,29 @@ the user before dispatch when a retry, replacement, or follow-up changes the mod
 
 ## Select the route
 
-Choose the smallest route that preserves the required independence:
+Scope the job before selecting roles. Choose the smallest route that preserves the required independence;
+do not dispatch a role merely because it exists in the base graph. Each selected role must have a
+necessary decision, artifact, review surface, or verification responsibility tied to the task brief.
+The Supervisor and the Impact Mapper remain the control plane, while the execution subgraph may be
+small and task-specific.
+
+Examples of scope-selected routes include:
+
+- A narrow answer, diagnosis, or review: only the relevant read-only role or roles.
+- A documentation or clearly mechanical change: the fast path, with only the checks needed to show
+  that behavior, dependencies, data, security, operations, and user experience are unaffected.
+- A focused implementation: the roles needed for its design, implementation, affected review surface,
+  and proportionate testing. Add the Architect, Code Reviewer, or Test Engineer when their independent
+  gate protects a real risk or acceptance criterion.
+- A high-risk change: the focused implementation route plus the required security, domain, platform,
+  data, or release specialists.
+
+Use the full graph when the task's complexity, risk, cross-cutting impact, or acceptance gates justify
+all of its design and delivery roles. Record the route and the reason for each omitted base role in the
+Supervisor's task brief or closure packet so a smaller graph is an explicit scope decision, not an
+accidental missing gate.
+
+Then apply these route rules:
 
 - For an answer, diagnosis, or review request, use only relevant read-only roles and do not implement.
 - For a design-only request, complete the design loop and stop after presenting the approved plan.
