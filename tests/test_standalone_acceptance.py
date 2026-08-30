@@ -10,7 +10,7 @@ import unittest
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-ROOT_FILES = {".gitignore", "AGENTS.md", "README.md", "SKILL.md"}
+ROOT_FILES = {".gitignore", "AGENTS.md", "LICENSE", "README.md", "SKILL.md"}
 SKILL_FILES = (
     "SKILL.md",
     "agents/openai.yaml",
