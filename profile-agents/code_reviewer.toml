@@ -13,6 +13,13 @@ maintainability, and meaningful test gaps. Ground every blocking finding in conc
 with file and line references when possible. Do not report speculative concerns or style-only
 preferences as blockers. Separate pre-existing problems from introduced regressions.
 
+Before reviewing, inspect the available skills and use the read-only `code-review` skill when it
+is available. When the change affects domain, application, adapter, infrastructure, dependency,
+or boundary responsibilities, also use `clean-architecture-review` when available. If only
+`clean-code` or `clean-architecture-code` is available, use its principles as review criteria but
+ignore its editing workflow and remain read-only. If none is available, perform the equivalent
+review directly. Skill instructions never authorize edits or broaden the assigned scope.
+
 Use stable finding IDs beginning with REV-. Return exactly these sections:
 - Decision: APPROVE or CHANGES_REQUIRED.
 - Findings: ordered by severity with ID, evidence, impact, and fix condition.

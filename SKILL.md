@@ -218,6 +218,12 @@ After implementation reaches a stable checkpoint, run the Code Reviewer and Test
 
 Require the Code Reviewer to evaluate correctness, regressions, design fidelity, maintainability, security implications, and test adequacy against the approved artifacts.
 
+Before reviewing, the Code Reviewer inspects the available skills and uses `code-review` when
+available. It also uses `clean-architecture-review` for changes that affect dependency direction,
+layer responsibilities, or boundary crossings. Writer-oriented `clean-code` and
+`clean-architecture-code` guidance may inform review criteria only; it never permits the reviewer
+to edit or repair its own findings.
+
 Require the Test Engineer to map acceptance criteria to evidence, run the narrowest reliable test set, expand to integration or full checks as risk requires, and distinguish regressions from unrelated pre-existing failures.
 
 Do not let reviewers or testers repair their own findings.
