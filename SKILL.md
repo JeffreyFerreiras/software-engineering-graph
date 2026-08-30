@@ -73,6 +73,16 @@ Use repository-defined specialists when its routing rules require them. If a nam
 The Impact Mapper selects route, risk, and specialist tags only. The Supervisor owns fan-out
 eligibility after checking branch dependencies and shared resources.
 
+## Delegation transparency
+
+Before dispatching any subagent, tell the user its role, exact model, reasoning effort, and bounded
+task scope. When dispatching several agents together, use one compact announcement that lists each
+agent and identifies which work will run in parallel.
+
+Resolve model and effort from the selected role's fixed configuration or explicit spawn settings.
+If either value is not exposed, state that it is inherited or unavailable instead of guessing. Tell
+the user before dispatch when a retry, replacement, or follow-up changes the model or effort.
+
 ## Select the route
 
 Choose the smallest route that preserves the required independence:
