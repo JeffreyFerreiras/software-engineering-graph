@@ -30,7 +30,9 @@ from .planner import (
     envelope, fanout_id, implementation_node, initial_route_nodes, join_id, next_join_for_success,
     revised_design_node, validate_fanout_ordering,
 )
-from .state import StateError, StateStore, current_actor, current_host_identity, utc_after, utc_now
+from .state import (
+    SemanticValidator, StateError, StateStore, current_actor, current_host_identity, utc_after, utc_now,
+)
 from .validator import (
     canonical_collection_members, compute_timing, join_members, validate_consolidation_manifest,
     validate_join, verify_resume, verify_semantic_state,
@@ -335,6 +337,7 @@ def command_init(args: argparse.Namespace, repo: Path, policy: Mapping[str, Any]
 def _record_branch_result(
     args: argparse.Namespace, connection: sqlite3.Connection, run: sqlite3.Row,
     policy: Mapping[str, Any], task: Mapping[str, Any], store: StateStore,
+    semantic_validator: SemanticValidator,
 ) -> Dict[str, Any]:
     snapshot = _manifest_snapshot(store, policy, run["run_id"], args.result_manifest)
     token_digest = _claim_token_digest(args.claim_token)
@@ -468,12 +471,16 @@ def _record_branch_result(
             "created_join_ids": sorted(created_join_ids), "promoted_branch_ids": promoted,
         }
 
-    return store.mutate(connection, run["run_id"], opaque(args.op_id, "op_id"), request, action)
+    return store.mutate(
+        connection, run["run_id"], opaque(args.op_id, "op_id"), request, action,
+        semantic_validator=semantic_validator,
+    )
 
 
 def _record_control(
     args: argparse.Namespace, connection: sqlite3.Connection, run: sqlite3.Row,
     policy: Mapping[str, Any], task: Mapping[str, Any], store: StateStore,
+    semantic_validator: SemanticValidator,
 ) -> Dict[str, Any]:
     kind = args.record_kind
     op_id = opaque(args.op_id, "op_id")
@@ -742,12 +749,16 @@ def _record_control(
                 conn.execute("INSERT INTO check_evidence VALUES(?,?,?,?,?)", (current["run_id"], request["check_id"], *values))
         return {"code": kind.upper().replace("-", "_") + "_RECORDED"}
 
-    return store.mutate(connection, run["run_id"], op_id, request, action)
+    return store.mutate(
+        connection, run["run_id"], op_id, request, action,
+        semantic_validator=semantic_validator,
+    )
 
 
 def command_fanout_assessment(
     args: argparse.Namespace, connection: sqlite3.Connection, run: sqlite3.Row,
-    policy: Mapping[str, Any], store: StateStore,
+    policy: Mapping[str, Any], store: StateStore, semantic_validator: SemanticValidator,
+    *, case_sensitive: bool,
 ) -> Dict[str, Any]:
     snapshot = _manifest_snapshot(store, policy, run["run_id"], args.assessment_manifest, 256 * 1024)
     authority_ref = validate_ref(args.authority_ref, "authority_ref")
@@ -767,7 +778,9 @@ def command_fanout_assessment(
         expected_members = json.loads(fanout["member_branch_ids_json"])
         manifest = validate_fanout_assessment(snapshot.parsed, current["run_id"], fanout["fanout_id"], expected_members)
         try:
-            dependencies = validate_fanout_ordering(manifest["members"], manifest["dependencies"])
+            dependencies = validate_fanout_ordering(
+                manifest["members"], manifest["dependencies"], case_sensitive=case_sensitive,
+            )
         except ValueError as error:
             raise StateError(str(error))
         verified_evidence = []
@@ -819,20 +832,31 @@ def command_fanout_assessment(
             "ready_branch_ids": promoted,
         }
 
-    return store.mutate(connection, run["run_id"], opaque(args.op_id, "op_id"), request, action)
+    return store.mutate(
+        connection, run["run_id"], opaque(args.op_id, "op_id"), request, action,
+        semantic_validator=semantic_validator,
+    )
 
 
-def command_record(args: argparse.Namespace, connection: sqlite3.Connection, run: sqlite3.Row, policy: Mapping[str, Any], task: Mapping[str, Any], store: StateStore) -> Dict[str, Any]:
+def command_record(
+    args: argparse.Namespace, connection: sqlite3.Connection, run: sqlite3.Row,
+    policy: Mapping[str, Any], task: Mapping[str, Any], store: StateStore,
+    semantic_validator: SemanticValidator, *, case_sensitive: bool,
+) -> Dict[str, Any]:
     if args.record_kind == "branch-result":
-        return _record_branch_result(args, connection, run, policy, task, store)
+        return _record_branch_result(args, connection, run, policy, task, store, semantic_validator)
     if args.record_kind == "fanout-assessment":
-        return command_fanout_assessment(args, connection, run, policy, store)
-    return _record_control(args, connection, run, policy, task, store)
+        return command_fanout_assessment(
+            args, connection, run, policy, store, semantic_validator,
+            case_sensitive=case_sensitive,
+        )
+    return _record_control(args, connection, run, policy, task, store, semantic_validator)
 
 
 def command_check_run(
     args: argparse.Namespace, connection: sqlite3.Connection, run: sqlite3.Row,
     policy: Mapping[str, Any], task: Mapping[str, Any], store: StateStore,
+    semantic_validator: SemanticValidator,
 ) -> Dict[str, Any]:
     check_id = opaque(args.check_id, "check_id")
     if check_id not in task["required_check_ids"]:
@@ -866,7 +890,10 @@ def command_check_run(
             "artifact_ref": artifact.ref, "artifact_sha256": artifact.sha256,
         }
 
-    return store.mutate(connection, run["run_id"], opaque(args.op_id, "op_id"), request, action)
+    return store.mutate(
+        connection, run["run_id"], opaque(args.op_id, "op_id"), request, action,
+        semantic_validator=semantic_validator,
+    )
 
 
 def _ready_envelopes(connection: sqlite3.Connection, run: Mapping[str, Any]) -> List[Dict[str, Any]]:
@@ -877,10 +904,12 @@ def _ready_envelopes(connection: sqlite3.Connection, run: Mapping[str, Any]) -> 
 def command_next(
     args: argparse.Namespace, connection: sqlite3.Connection, run: sqlite3.Row,
     policy_digest: str, repo: Path, policy: Mapping[str, Any], store: StateStore,
+    semantic_validator: SemanticValidator, *, case_sensitive: bool,
 ) -> Dict[str, Any]:
     if not args.claim:
         verify_semantic_state(
-            connection, run, repo, policy_digest, policy, Path(__file__).resolve().parents[1]
+            connection, run, repo, policy_digest, policy, Path(__file__).resolve().parents[1],
+            case_sensitive=case_sensitive,
         )
         if run["status"] == "blocked":
             return _json_result(False, "GRAPH_BLOCKED", run["run_id"], run["state_revision"], branches=[])
@@ -964,7 +993,10 @@ def command_next(
         dispatch["claim_token"] = claim_token
         return {"code": "CLAIMED", "branch": dispatch}
 
-    return store.mutate(connection, run["run_id"], op_id, request, action)
+    return store.mutate(
+        connection, run["run_id"], op_id, request, action,
+        semantic_validator=semantic_validator,
+    )
 
 
 def command_join_validate(args: argparse.Namespace, connection: sqlite3.Connection, run: sqlite3.Row) -> Dict[str, Any]:
@@ -983,7 +1015,11 @@ def _consume_loop_budget(connection: sqlite3.Connection, run_id: str, budget_id:
     return True
 
 
-def command_join_advance(args: argparse.Namespace, connection: sqlite3.Connection, run: sqlite3.Row, policy: Mapping[str, Any], task: Mapping[str, Any], store: StateStore) -> Dict[str, Any]:
+def command_join_advance(
+    args: argparse.Namespace, connection: sqlite3.Connection, run: sqlite3.Row,
+    policy: Mapping[str, Any], task: Mapping[str, Any], store: StateStore,
+    semantic_validator: SemanticValidator,
+) -> Dict[str, Any]:
     op_id = opaque(args.op_id, "op_id")
     request = {"command": "join.advance", "join_id": opaque(args.join_id, "join_id")}
 
@@ -1125,7 +1161,10 @@ def command_join_advance(args: argparse.Namespace, connection: sqlite3.Connectio
             "created_fanout_ids": sorted(created_fanout_ids),
         }
 
-    return store.mutate(connection, run["run_id"], op_id, request, action)
+    return store.mutate(
+        connection, run["run_id"], op_id, request, action,
+        semantic_validator=semantic_validator,
+    )
 
 
 def _next_action(connection: sqlite3.Connection, run: Mapping[str, Any]) -> Dict[str, Any]:
@@ -1235,7 +1274,11 @@ def command_status(connection: sqlite3.Connection, run: sqlite3.Row) -> Dict[str
     )
 
 
-def command_complete(args: argparse.Namespace, connection: sqlite3.Connection, run: sqlite3.Row, policy: Mapping[str, Any], task: Mapping[str, Any], store: StateStore) -> Dict[str, Any]:
+def command_complete(
+    args: argparse.Namespace, connection: sqlite3.Connection, run: sqlite3.Row,
+    policy: Mapping[str, Any], task: Mapping[str, Any], store: StateStore,
+    semantic_validator: SemanticValidator,
+) -> Dict[str, Any]:
     request = {"command": "complete"}
 
     def action(conn: sqlite3.Connection, current: sqlite3.Row, revision: int) -> Dict[str, Any]:
@@ -1276,12 +1319,19 @@ def command_complete(args: argparse.Namespace, connection: sqlite3.Connection, r
         )
         return {"code": "COMPLETE", "status": "complete"}
 
-    return store.mutate(connection, run["run_id"], opaque(args.op_id, "op_id"), request, action)
+    return store.mutate(
+        connection, run["run_id"], opaque(args.op_id, "op_id"), request, action,
+        semantic_validator=semantic_validator,
+    )
 
 
-def command_run_control(args: argparse.Namespace, connection: sqlite3.Connection, run: sqlite3.Row, policy: Mapping[str, Any], task: Mapping[str, Any], store: StateStore) -> Dict[str, Any]:
+def command_run_control(
+    args: argparse.Namespace, connection: sqlite3.Connection, run: sqlite3.Row,
+    policy: Mapping[str, Any], task: Mapping[str, Any], store: StateStore,
+    semantic_validator: SemanticValidator, *, case_sensitive: bool,
+) -> Dict[str, Any]:
     if args.command == "complete":
-        return command_complete(args, connection, run, policy, task, store)
+        return command_complete(args, connection, run, policy, task, store, semantic_validator)
     if args.command == "resume":
         if run["permission_verification"] == "DEGRADED_PERMISSION_VERIFICATION" and not args.ack_degraded_permissions:
             raise StateError("DEGRADED_PERMISSION_ACK_REQUIRED")
@@ -1289,7 +1339,7 @@ def command_run_control(args: argparse.Namespace, connection: sqlite3.Connection
             raise StateError("DEGRADED_DURABILITY_ACK_REQUIRED")
         verify_resume(
             connection, run, Path(run["repository_path"]), run["policy_digest"], policy,
-            Path(__file__).resolve().parents[1],
+            Path(__file__).resolve().parents[1], case_sensitive=case_sensitive,
         )
         result = command_status(connection, run)
         result["code"] = "RESUMED"
@@ -1335,7 +1385,10 @@ def command_run_control(args: argparse.Namespace, connection: sqlite3.Connection
         )
         return {"code": code, "status": target}
 
-    return store.mutate(connection, run["run_id"], opaque(args.op_id, "op_id"), request, action)
+    return store.mutate(
+        connection, run["run_id"], opaque(args.op_id, "op_id"), request, action,
+        semantic_validator=semantic_validator,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1383,6 +1436,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def execute(argv: Optional[Sequence[str]] = None, store: Optional[StateStore] = None) -> Tuple[Dict[str, Any], int]:
     args = build_parser().parse_args(argv)
+    case_sensitive = os.path.normcase("A") != os.path.normcase("a")
     repo = Path(args.repo).resolve(strict=True)
     policy, policy_snapshot = load_policy(repo)
     state = store or StateStore()
@@ -1392,8 +1446,9 @@ def execute(argv: Optional[Sequence[str]] = None, store: Optional[StateStore] = 
     with state.open_run(policy["repository_id"], run_id) as connection:
         run, stored_policy, task = _run_context(connection, run_id)
         skill_root = Path(__file__).resolve().parents[1]
-        state.semantic_validator = lambda conn, current: verify_semantic_state(
-            conn, current, repo, policy_snapshot.digest, policy, skill_root
+        semantic_validator = lambda conn, current: verify_semantic_state(
+            conn, current, repo, policy_snapshot.digest, policy, skill_root,
+            case_sensitive=case_sensitive,
         )
         is_mutation = (
             args.command in {"record", "complete", "block", "abort", "check"}
@@ -1401,23 +1456,39 @@ def execute(argv: Optional[Sequence[str]] = None, store: Optional[StateStore] = 
             or (args.command == "join" and args.join_kind == "advance")
         )
         if not is_mutation:
-            verify_semantic_state(connection, run, repo, policy_snapshot.digest, policy, skill_root)
+            verify_semantic_state(
+                connection, run, repo, policy_snapshot.digest, policy, skill_root,
+                case_sensitive=case_sensitive,
+            )
         if args.command == "record":
-            result = command_record(args, connection, run, stored_policy, task, state)
+            result = command_record(
+                args, connection, run, stored_policy, task, state, semantic_validator,
+                case_sensitive=case_sensitive,
+            )
         elif args.command == "check":
-            result = command_check_run(args, connection, run, stored_policy, task, state)
+            result = command_check_run(
+                args, connection, run, stored_policy, task, state, semantic_validator,
+            )
         elif args.command in {"next", "ready"}:
             if args.command == "ready":
                 args.all = True; args.claim = False
             if args.claim and not args.op_id:
                 raise ContractError("op_id", "MISSING_FIELD")
-            result = command_next(args, connection, run, policy_snapshot.digest, repo, policy, state)
+            result = command_next(
+                args, connection, run, policy_snapshot.digest, repo, policy, state,
+                semantic_validator, case_sensitive=case_sensitive,
+            )
         elif args.command == "join":
-            result = command_join_validate(args, connection, run) if args.join_kind == "validate" else command_join_advance(args, connection, run, stored_policy, task, state)
+            result = command_join_validate(args, connection, run) if args.join_kind == "validate" else command_join_advance(
+                args, connection, run, stored_policy, task, state, semantic_validator,
+            )
         elif args.command == "status":
             result = command_status(connection, run)
         else:
-            result = command_run_control(args, connection, run, stored_policy, task, state)
+            result = command_run_control(
+                args, connection, run, stored_policy, task, state, semantic_validator,
+                case_sensitive=case_sensitive,
+            )
     if result["code"] in {"NOT_READY", "FANOUT_ASSESSMENT_REQUIRED"}:
         return result, 2
     if result["code"] in {"GRAPH_BLOCKED", "EXECUTION_PLAN_REJECTED"}:
