@@ -14,7 +14,7 @@ from graph_engine.state import (
     local_filesystem_identity,
 )
 
-from test_support import GraphCase
+from tests.test_support import GraphCase
 
 
 class StateTests(GraphCase):
@@ -108,7 +108,7 @@ class StateTests(GraphCase):
         with self.assertRaisesRegex(RuntimeError, "fault"):
             execute(["--repo", str(self.repo), "next", "--run-id", "RUN-1", "--claim", "--op-id", "fault-op"], faulting)
         status = self.graphctl("status", "--run-id", "RUN-1")
-        self.assertEqual(status["state_revision"], 1)
+        self.assertEqual(status["state_revision"], 2)
         self.assertEqual(status["branches"][0]["status"], "ready")
 
     def test_initialization_fault_never_leaves_authoritative_database(self):
@@ -323,11 +323,14 @@ class StateTests(GraphCase):
                 self.assertEqual(replay["state_revision"], first["state_revision"])
                 connection.execute("UPDATE runs SET status='active' WHERE run_id='RUN-1'")
 
-    def test_default_store_uses_profile_root_not_skill_directory(self):
-        home = installed_codex_home()
-        self.assertEqual(home, Path(r"C:\Users\sephn\.codex"))
-        default = StateStore()
-        self.assertTrue(str(default.run_root("repo", "run")).startswith(str(home / "graph-runs")))
+    def test_source_checkout_default_store_fails_closed_without_profile_fallback(self):
+        with patch("graph_engine.state.Path.home", side_effect=AssertionError("real profile fallback")):
+            with self.assertRaisesRegex(StateError, "CODEX_PROFILE_ROOT_NOT_FOUND"):
+                installed_codex_home()
+            with self.assertRaisesRegex(StateError, "CODEX_PROFILE_ROOT_NOT_FOUND"):
+                StateStore()
+        explicit = StateStore(self.root / "explicit-codex-home")
+        self.assertEqual(explicit.codex_home, (self.root / "explicit-codex-home").absolute())
 
     def test_semantic_corruption_fails_closed(self):
         cases = [

@@ -33,6 +33,13 @@ human explicitly approves that immutable execution plan.
    blocks the run; start a new run for a materially different size, route, role set, model, or effort.
 5. Dispatch only the envelope returned by `next --claim` after approval. The first branch is always
    `impact_mapper`.
+   When `status` reports `record_fanout_assessment`, record one complete, evidence-backed Supervisor
+   assessment before claiming any sibling:
+
+   `python <skill>/scripts/graphctl.py --repo <repo> record fanout-assessment --run-id <id> --fanout-id <id> --assessment-manifest <path> --authority-ref authority:<id> --op-id <id>`
+
+   Cover every listed member and all four resource categories. Order every exclusive conflict and any
+   service usage needed to keep each unordered set within capacity. The assessment is immutable.
 6. Put each returned branch manifest in the derived run inbox shown by `init` or `status`, then use
    `record branch-result` with the claimed `attempt_id` and `claim_token`. Branch manifests never
    contain control mutations.
@@ -45,6 +52,9 @@ degraded mode is acceptable. These flags acknowledge platform limitations; they 
 
 - Use `ready` or `next --all` to inspect dispatchable branches. Use `next --claim --op-id <id>` to
   claim exactly one branch atomically.
+- Multi-member fixed review fan-outs begin pending. After the Supervisor assessment, independent roots
+  become ready together and ordered successors promote atomically only after predecessors settle.
+  Retryable failure does not release a successor. Do not use this mechanism as an arbitrary DAG scheduler.
 - Use `join validate` before `join advance`. Collection joins only freeze terminal branch results
   and activate a typed Supervisor consolidation branch. Consolidation joins alone apply precedence,
   consume loop budgets, block, or activate the next generation.
@@ -64,6 +74,8 @@ degraded mode is acceptable. These flags acknowledge platform limitations; they 
   are satisfied. Use `abort` for rollback; retained databases are audit evidence and are not deleted.
 
 `status --json` is the supported export. Treat it as sensitive operational metadata.
+It also reports schema-5 attempt counts and deterministic UTC wall-clock timing. Retry waits count toward
+branch lifecycle wall time but not active duration or critical-path weight.
 
 ## Operating model
 

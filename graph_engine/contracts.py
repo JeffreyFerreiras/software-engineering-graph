@@ -280,6 +280,115 @@ def _validate_attempt(value: Mapping[str, Any], field: str) -> None:
     digest(value.get("claim_digest"), field + ".claim_digest")
 
 
+def validate_fanout_assessment(
+    value: Any, run_id: str, fanout_id: str, expected_members: Sequence[str],
+) -> Dict[str, Any]:
+    """Validate and canonicalize a Supervisor resource assessment manifest."""
+    if not isinstance(value, dict):
+        raise ContractError("assessment_manifest", "FANOUT_ASSESSMENT_INVALID")
+    required = {"schema_version", "kind", "run_id", "fanout_id", "members", "dependencies", "evidence"}
+    require_keys(value, required, required, "assessment_manifest")
+    if (value["schema_version"] != 1 or value["kind"] != "fanout_assessment"
+            or value["run_id"] != run_id or value["fanout_id"] != fanout_id):
+        raise ContractError("assessment_manifest", "FANOUT_ASSESSMENT_INVALID")
+    if not isinstance(value["members"], list):
+        raise ContractError("members", "FANOUT_MEMBER_INVALID")
+    normalized_members: List[Dict[str, Any]] = []
+    for index, member in enumerate(value["members"]):
+        field = "members[{}]".format(index)
+        if not isinstance(member, dict):
+            raise ContractError(field, "FANOUT_MEMBER_INVALID")
+        require_keys(member, {"branch_id", "resources"}, {"branch_id", "resources"}, field)
+        branch = opaque(member["branch_id"], field + ".branch_id")
+        resources = member["resources"]
+        if not isinstance(resources, dict):
+            raise ContractError(field + ".resources", "FANOUT_RESOURCE_INVALID")
+        resource_keys = {"writable_paths", "mutable_state_refs", "exclusive_device_refs", "services"}
+        require_keys(resources, resource_keys, resource_keys, field + ".resources")
+        writable_paths: List[Dict[str, str]] = []
+        if not isinstance(resources["writable_paths"], list):
+            raise ContractError(field + ".writable_paths", "FANOUT_RESOURCE_INVALID")
+        for path_index, item in enumerate(resources["writable_paths"]):
+            path_field = "{}.writable_paths[{}]".format(field, path_index)
+            if not isinstance(item, dict):
+                raise ContractError(path_field, "FANOUT_RESOURCE_INVALID")
+            require_keys(item, {"path", "scope"}, {"path", "scope"}, path_field)
+            if item["scope"] not in {"exact", "subtree"}:
+                raise ContractError(path_field + ".scope", "FANOUT_RESOURCE_INVALID")
+            path = lexical_relative(item["path"], path_field + ".path").rstrip("/")
+            writable_paths.append({"path": path, "scope": item["scope"]})
+        if len({(item["path"], item["scope"]) for item in writable_paths}) != len(writable_paths):
+            raise ContractError(field + ".writable_paths", "FANOUT_RESOURCE_INVALID")
+        mutable = _unique_strings(resources["mutable_state_refs"], field + ".mutable_state_refs")
+        devices = _unique_strings(resources["exclusive_device_refs"], field + ".exclusive_device_refs")
+        if not isinstance(resources["services"], list):
+            raise ContractError(field + ".services", "FANOUT_RESOURCE_INVALID")
+        services: List[Dict[str, Any]] = []
+        for service_index, service in enumerate(resources["services"]):
+            service_field = "{}.services[{}]".format(field, service_index)
+            if not isinstance(service, dict):
+                raise ContractError(service_field, "FANOUT_RESOURCE_INVALID")
+            require_keys(service, {"ref", "units", "capacity"}, {"ref", "units", "capacity"}, service_field)
+            ref = bounded_string(service["ref"], service_field + ".ref", 1024)
+            if (not isinstance(service["units"], int) or isinstance(service["units"], bool)
+                    or not isinstance(service["capacity"], int) or isinstance(service["capacity"], bool)
+                    or service["units"] <= 0 or service["capacity"] <= 0
+                    or service["units"] > service["capacity"]):
+                raise ContractError(service_field, "FANOUT_CAPACITY_INVALID")
+            services.append({"ref": ref, "units": service["units"], "capacity": service["capacity"]})
+        if len({item["ref"] for item in services}) != len(services):
+            raise ContractError(field + ".services", "FANOUT_RESOURCE_INVALID")
+        normalized_members.append({
+            "branch_id": branch,
+            "resources": {
+                "writable_paths": sorted(writable_paths, key=lambda item: (item["path"], item["scope"])),
+                "mutable_state_refs": mutable, "exclusive_device_refs": devices,
+                "services": sorted(services, key=lambda item: item["ref"]),
+            },
+        })
+    actual_members = [member["branch_id"] for member in normalized_members]
+    if len(set(actual_members)) != len(actual_members) or set(actual_members) != set(expected_members):
+        raise ContractError("members", "FANOUT_MEMBER_INVALID")
+    if not isinstance(value["dependencies"], list):
+        raise ContractError("dependencies", "FANOUT_DEPENDENCY_INVALID")
+    dependencies: List[Dict[str, str]] = []
+    for index, dependency in enumerate(value["dependencies"]):
+        field = "dependencies[{}]".format(index)
+        if not isinstance(dependency, dict):
+            raise ContractError(field, "FANOUT_DEPENDENCY_INVALID")
+        keys = {"before_branch_id", "after_branch_id", "reason"}
+        require_keys(dependency, keys, keys, field)
+        dependencies.append({
+            "before_branch_id": opaque(dependency["before_branch_id"], field + ".before_branch_id"),
+            "after_branch_id": opaque(dependency["after_branch_id"], field + ".after_branch_id"),
+            "reason": bounded_string(dependency["reason"], field + ".reason", 1024),
+        })
+    if not isinstance(value["evidence"], list) or not value["evidence"]:
+        raise ContractError("evidence", "FANOUT_EVIDENCE_REQUIRED")
+    evidence: List[Dict[str, str]] = []
+    for index, item in enumerate(value["evidence"]):
+        field = "evidence[{}]".format(index)
+        if not isinstance(item, dict):
+            raise ContractError(field, "FANOUT_EVIDENCE_REQUIRED")
+        require_keys(item, {"kind", "ref", "sha256"}, {"kind", "ref", "sha256"}, field)
+        evidence.append({
+            "kind": opaque(item["kind"], field + ".kind"),
+            "ref": validate_ref(item["ref"], field + ".ref", content_required=True),
+            "sha256": digest(item["sha256"], field + ".sha256"),
+        })
+    if len({item["ref"] for item in evidence}) != len(evidence):
+        raise ContractError("evidence", "FANOUT_EVIDENCE_REQUIRED")
+    return {
+        "schema_version": 1, "kind": "fanout_assessment", "run_id": run_id,
+        "fanout_id": fanout_id,
+        "members": sorted(normalized_members, key=lambda item: item["branch_id"]),
+        "dependencies": sorted(dependencies, key=lambda item: (
+            item["before_branch_id"], item["after_branch_id"], item["reason"],
+        )),
+        "evidence": sorted(evidence, key=lambda item: (item["kind"], item["ref"])),
+    }
+
+
 def validate_task_brief(value: Any, policy_digest: str, policy: Mapping[str, Any]) -> Dict[str, Any]:
     if not isinstance(value, dict):
         raise ContractError("task_brief", "INVALID_OBJECT")

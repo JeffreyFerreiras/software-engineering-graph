@@ -1,22 +1,26 @@
 """Transition, consolidation, and exhaustive persisted-state validation."""
 
 import json
+import re
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from . import STATE_SCHEMA_VERSION
 from .checks import configured_check, validate_check_receipt
 from .contracts import (
-    ContractError, authoritative_task_subset, digest, opaque, safe_json_snapshot, validate_impact_map,
-    validate_result_manifest, validate_task_brief,
+    ContractError, authoritative_task_subset, digest, opaque, safe_json_snapshot,
+    validate_fanout_assessment, validate_impact_map, validate_result_manifest, validate_task_brief,
 )
 from .config import engine_version_compatible
 from .evidence import reverify_artifact
 from .execution import build_execution_plan, plan_approval_digest
 from .ids import canonical_bytes, sha256_bytes, stable_id
-from .planner import NodeSpec, envelope
+from .planner import (
+    NodeSpec, branch_id, delivery_review_nodes, design_review_nodes, envelope, fanout_id,
+    initial_route_nodes, validate_fanout_ordering,
+)
 from .state import StateError, current_host_identity, repository_identity
 
 
@@ -35,6 +39,452 @@ JOIN_BINDINGS = {
     "delivery_consolidation": ("consolidation", "delivery"),
     "closure": ("closure", "closure"),
 }
+UTC_TIMESTAMP = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?Z$")
+
+
+def timestamp_microseconds(value: Any) -> int:
+    if not isinstance(value, str):
+        raise StateError("TIMESTAMP_INVALID")
+    matched = UTC_TIMESTAMP.fullmatch(value)
+    if matched is None:
+        raise StateError("TIMESTAMP_INVALID")
+    try:
+        parsed = datetime.strptime(matched.group(1), "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise StateError("TIMESTAMP_INVALID")
+    fraction = (matched.group(2) or "").ljust(6, "0")
+    parsed = parsed.replace(microsecond=int(fraction or "0"))
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    delta = parsed - epoch
+    return ((delta.days * 86400 + delta.seconds) * 1_000_000) + delta.microseconds
+
+
+def _operation_responses(connection: sqlite3.Connection, run_id: str) -> List[Mapping[str, Any]]:
+    responses = []
+    for row in connection.execute(
+        "SELECT response_json FROM operations WHERE run_id=? ORDER BY resulting_revision", (run_id,)
+    ):
+        try:
+            responses.append(json.loads(row["response_json"]))
+        except (TypeError, json.JSONDecodeError):
+            raise StateError("TOPOLOGY_HISTORY_INVALID")
+    return responses
+
+
+def _validate_reconstructed_graph(connection: sqlite3.Connection, run: Mapping[str, Any]) -> None:
+    expected_nodes: Set[str] = set()
+    expected_joins: Set[str] = set()
+    expected_fanouts: Set[str] = set()
+    advanced: Dict[str, Mapping[str, Any]] = {}
+    for response in _operation_responses(connection, run["run_id"]):
+        branch = response.get("branch")
+        if isinstance(branch, dict) and isinstance(branch.get("branch_id"), str):
+            expected_nodes.add(branch["branch_id"])
+        for key, target in (
+            ("successor_branch_ids", expected_nodes),
+            ("created_join_ids", expected_joins),
+            ("created_fanout_ids", expected_fanouts),
+        ):
+            values = response.get(key, [])
+            if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+                raise StateError("TOPOLOGY_HISTORY_INVALID")
+            target.update(values)
+        if response.get("code") == "JOIN_ADVANCED":
+            join_identifier = response.get("join_id")
+            if not isinstance(join_identifier, str) or join_identifier in advanced:
+                raise StateError("TOPOLOGY_HISTORY_INVALID")
+            advanced[join_identifier] = response
+    actual_nodes = {row[0] for row in connection.execute("SELECT branch_id FROM nodes WHERE run_id=?", (run["run_id"],))}
+    actual_joins = {row[0] for row in connection.execute("SELECT join_id FROM joins WHERE run_id=?", (run["run_id"],))}
+    actual_fanouts = {row[0] for row in connection.execute("SELECT fanout_id FROM fanouts WHERE run_id=?", (run["run_id"],))}
+    policy = json.loads(run["policy_json"])
+    mapper = connection.execute(
+        "SELECT * FROM nodes WHERE run_id=? AND node_key='impact_mapper'", (run["run_id"],)
+    ).fetchone()
+    if mapper is not None and mapper["status"] == "succeeded":
+        try:
+            impact = json.loads(mapper["result_json"])
+            for spec in initial_route_nodes(policy, impact["route_label"]):
+                expected_nodes.add(branch_id(run["run_id"], run["policy_digest"], spec))
+        except (TypeError, KeyError, json.JSONDecodeError):
+            raise StateError("TOPOLOGY_HISTORY_INVALID")
+    for node in connection.execute("SELECT * FROM nodes WHERE run_id=? AND status='succeeded'", (run["run_id"],)):
+        required_join_key = None
+        if node["node_key"] == "tech_lead":
+            required_join_key = "design_inputs"
+        elif node["node_key"] == "advisory_reviewer":
+            required_join_key = "closure"
+        elif node["node_key"] == "senior_engineer":
+            result = json.loads(node["result_json"])
+            required_join_key = "delivery_collection" if result.get("decision") == "REDESIGN_REQUIRED" else "implementation"
+        if required_join_key is not None:
+            expected_joins.add(stable_id(
+                run["run_id"], run["policy_digest"], "join", required_join_key, node["generation"]
+            ))
+    tags = json.loads(run["selected_tags_json"] or "[]")
+    for join in connection.execute("SELECT * FROM joins WHERE run_id=? AND status='sealed'", (run["run_id"],)):
+        if join["kind"] == "dependency":
+            specs = (
+                design_review_nodes(policy, tags, join["generation"])
+                if join["stage"] == "design"
+                else delivery_review_nodes(policy, tags, join["generation"])
+            )
+            expected_nodes.update(branch_id(run["run_id"], run["policy_digest"], spec) for spec in specs)
+            expected_joins.add(stable_id(
+                run["run_id"], run["policy_digest"], "join", join["stage"] + "_collection", join["generation"]
+            ))
+    if actual_nodes != expected_nodes:
+        raise StateError("TOPOLOGY_NODE_INVALID")
+    if actual_joins != expected_joins:
+        raise StateError("TOPOLOGY_JOIN_INVALID")
+    if actual_fanouts != expected_fanouts:
+        raise StateError("TOPOLOGY_EDGE_INVALID")
+    for join in connection.execute("SELECT * FROM joins WHERE run_id=?", (run["run_id"],)):
+        witness = advanced.get(join["join_id"])
+        if join["status"] == "sealed" and join["kind"] != "closure" and witness is None:
+            raise StateError("TOPOLOGY_HISTORY_INVALID")
+        if witness is None:
+            continue
+        if join["status"] != "sealed":
+            raise StateError("TOPOLOGY_HISTORY_INVALID")
+        successors = witness.get("successor_branch_ids", [])
+        members = join_members(connection, join["join_id"])
+        required_refs: Set[str] = set()
+        if join["kind"] == "dependency":
+            required_refs = {"ledger:" + member["branch_id"] + "#sha256=" + member["result_digest"] for member in members}
+        elif join["kind"] == "collection":
+            artifacts = connection.execute(
+                "SELECT ref FROM artifacts WHERE run_id=? AND kind='collection' AND ref LIKE ?",
+                (run["run_id"], "ledger:" + join["join_id"] + "#sha256=%"),
+            ).fetchall()
+            required_refs = {row["ref"] for row in artifacts}
+        elif join["kind"] == "consolidation":
+            required_refs = {"ledger:" + member["branch_id"] + "#sha256=" + member["result_digest"] for member in members}
+        for successor_id in successors:
+            successor = connection.execute("SELECT envelope_json FROM nodes WHERE branch_id=?", (successor_id,)).fetchone()
+            if successor is None:
+                raise StateError("TOPOLOGY_NODE_INVALID")
+            refs = {item["ref"] for item in json.loads(successor["envelope_json"])["inputs"]}
+            if required_refs and not required_refs.issubset(refs):
+                raise StateError("TOPOLOGY_EDGE_INVALID")
+    if run["status"] == "complete":
+        closure = connection.execute(
+            "SELECT * FROM joins WHERE run_id=? AND join_key='closure' AND status='sealed'",
+            (run["run_id"],),
+        ).fetchall()
+        if len(closure) != 1:
+            raise StateError("TOPOLOGY_JOIN_INVALID")
+
+
+def _validate_fanouts(connection: sqlite3.Connection, run: Mapping[str, Any]) -> None:
+    collection_sets: Dict[Tuple[str, int], List[str]] = {}
+    for join in connection.execute(
+        "SELECT * FROM joins WHERE run_id=? AND kind='collection'", (run["run_id"],)
+    ):
+        members = [member["branch_id"] for member in join_members(connection, join["join_id"])]
+        if len(members) > 1:
+            collection_sets[(join["stage"], join["generation"])] = sorted(members)
+    fanout_rows = connection.execute("SELECT * FROM fanouts WHERE run_id=?", (run["run_id"],)).fetchall()
+    if {(row["stage"], row["generation"]) for row in fanout_rows} != set(collection_sets):
+        raise StateError("FANOUT_STATE_INVALID")
+    for fanout in fanout_rows:
+        expected_id = fanout_id(run["run_id"], run["policy_digest"], fanout["stage"], fanout["generation"])
+        try:
+            member_ids = json.loads(fanout["member_branch_ids_json"])
+        except (TypeError, json.JSONDecodeError):
+            raise StateError("FANOUT_MEMBER_INVALID")
+        if (fanout["fanout_id"] != expected_id or member_ids != sorted(set(member_ids))
+                or member_ids != collection_sets.get((fanout["stage"], fanout["generation"]))):
+            raise StateError("FANOUT_MEMBER_INVALID")
+        dependency_rows = connection.execute(
+            "SELECT before_branch_id,after_branch_id,reason FROM fanout_dependencies WHERE fanout_id=? ORDER BY before_branch_id,after_branch_id,reason",
+            (fanout["fanout_id"],),
+        ).fetchall()
+        if fanout["status"] == "awaiting":
+            if dependency_rows or any(
+                connection.execute("SELECT status FROM nodes WHERE branch_id=?", (member_id,)).fetchone()[0] != "pending"
+                for member_id in member_ids
+            ):
+                raise StateError("FANOUT_ASSESSMENT_REQUIRED")
+            continue
+        artifact = connection.execute("SELECT * FROM artifacts WHERE ref=?", (fanout["assessment_ref"],)).fetchone()
+        if artifact is None or artifact["kind"] != "evidence_manifest" or artifact["sha256"] != fanout["assessment_digest"] or not artifact["content_json"]:
+            raise StateError("FANOUT_ASSESSMENT_INVALID")
+        try:
+            content = json.loads(artifact["content_json"])
+            submitted = {key: content[key] for key in (
+                "schema_version", "kind", "run_id", "fanout_id", "members", "dependencies", "evidence"
+            )}
+            normalized = validate_fanout_assessment(submitted, run["run_id"], fanout["fanout_id"], member_ids)
+            dependencies = validate_fanout_ordering(normalized["members"], normalized["dependencies"])
+        except (KeyError, ValueError, ContractError, json.JSONDecodeError):
+            raise StateError("FANOUT_ASSESSMENT_INVALID")
+        if (content.get("authority_ref"), content.get("actor"), content.get("host_identity"), content.get("assessed_at")) != (
+            fanout["authority_ref"], fanout["actor"], fanout["host_identity"], fanout["assessed_at"]
+        ) or fanout["host_identity"] != run["host_identity"]:
+            raise StateError("FANOUT_ASSESSMENT_INVALID")
+        if [dict(row) for row in dependency_rows] != dependencies:
+            raise StateError("FANOUT_DEPENDENCY_STATE_INVALID")
+        for member_id in member_ids:
+            branch = connection.execute("SELECT * FROM nodes WHERE branch_id=?", (member_id,)).fetchone()
+            if branch is None:
+                raise StateError("FANOUT_MEMBER_INVALID")
+            inputs = json.loads(branch["envelope_json"])["inputs"]
+            matching = [item for item in inputs if item["ref"] == artifact["ref"]]
+            if len(matching) != 1 or matching[0]["sha256"] != artifact["sha256"] or matching[0]["kind"] != "evidence_manifest":
+                raise StateError("FANOUT_ASSESSMENT_INVALID")
+            predecessors = connection.execute(
+                """SELECT n.* FROM fanout_dependencies d JOIN nodes n ON n.branch_id=d.before_branch_id
+                WHERE d.fanout_id=? AND d.after_branch_id=?""", (fanout["fanout_id"], member_id)
+            ).fetchall()
+            eligible = all(
+                predecessor["status"] in {"succeeded", "skipped"} or (
+                    predecessor["status"] in {"failed", "timed_out"}
+                    and predecessor["retry_count"] >= predecessor["max_retries"]
+                ) for predecessor in predecessors
+            )
+            if (eligible and branch["status"] == "pending") or (not eligible and branch["status"] != "pending"):
+                raise StateError("FANOUT_DEPENDENCY_STATE_INVALID")
+
+
+def _validate_attempts(connection: sqlite3.Connection, run: Mapping[str, Any]) -> None:
+    started = timestamp_microseconds(run["started_at"])
+    finished = timestamp_microseconds(run["finished_at"]) if run["finished_at"] is not None else None
+    if finished is not None and finished < started:
+        raise StateError("TIMESTAMP_ORDER_INVALID")
+    if (run["status"] in {"blocked", "complete", "aborted"}) != (finished is not None):
+        raise StateError("TIMESTAMP_STATE_INVALID")
+    for node in connection.execute("SELECT * FROM nodes WHERE run_id=?", (run["run_id"],)):
+        node_started = timestamp_microseconds(node["started_at"]) if node["started_at"] else None
+        node_finished = timestamp_microseconds(node["finished_at"]) if node["finished_at"] else None
+        if node_started is not None and node_started < started:
+            raise StateError("TIMESTAMP_ORDER_INVALID")
+        if node_finished is not None and node_started is not None and node_finished < node_started:
+            raise StateError("TIMESTAMP_ORDER_INVALID")
+        if finished is not None and node_finished is not None and node_finished > finished:
+            raise StateError("TIMESTAMP_ORDER_INVALID")
+        node_envelope = json.loads(node["envelope_json"])
+        if node_envelope.get("started_at") != node["started_at"] or node_envelope.get("finished_at") != node["finished_at"]:
+            raise StateError("TIMESTAMP_STATE_INVALID")
+        attempts = connection.execute(
+            "SELECT * FROM branch_attempts WHERE run_id=? AND branch_id=? ORDER BY attempt_number",
+            (run["run_id"], node["branch_id"]),
+        ).fetchall()
+        if node["status"] in {"pending", "skipped"}:
+            expected_count = 0
+        elif node["status"] == "ready":
+            expected_count = node["retry_count"]
+        else:
+            expected_count = node["retry_count"] + 1
+        if len(attempts) != expected_count or [row["attempt_number"] for row in attempts] != list(range(1, len(attempts) + 1)):
+            raise StateError("ATTEMPT_HISTORY_INVALID")
+        previous_start: Optional[int] = None
+        previous_finish: Optional[int] = None
+        for index, attempt in enumerate(attempts):
+            attempt_start = timestamp_microseconds(attempt["started_at"])
+            attempt_finish = timestamp_microseconds(attempt["finished_at"]) if attempt["finished_at"] else None
+            if (attempt_start < started or (previous_start is not None and attempt_start < previous_start)
+                    or (previous_finish is not None and attempt_start < previous_finish)
+                    or len(attempt["claim_digest"]) != 64 or not attempt["attempt_id"]):
+                raise StateError("ATTEMPT_TIMESTAMP_INVALID")
+            if attempt_finish is not None and attempt_finish < attempt_start:
+                raise StateError("ATTEMPT_TIMESTAMP_INVALID")
+            if attempt_finish is not None and attempt["outcome"] not in {"succeeded", "failed", "timed_out"}:
+                raise StateError("ATTEMPT_STATE_INVALID")
+            if attempt_finish is not None and index < len(attempts) - 1 and attempt["outcome"] not in {"failed", "timed_out"}:
+                raise StateError("ATTEMPT_HISTORY_INVALID")
+            if finished is not None and attempt_finish is not None and attempt_finish > finished:
+                raise StateError("ATTEMPT_TIMESTAMP_INVALID")
+            previous_start = attempt_start
+            previous_finish = attempt_finish
+        open_attempts = [attempt for attempt in attempts if attempt["finished_at"] is None]
+        if node["status"] == "running":
+            if len(open_attempts) != 1 or open_attempts[0] != attempts[-1]:
+                raise StateError("ATTEMPT_STATE_INVALID")
+        elif open_attempts:
+            raise StateError("ATTEMPT_STATE_INVALID")
+        if attempts:
+            env = json.loads(node["envelope_json"])
+            if node["started_at"] != attempts[0]["started_at"] or env["started_at"] != node["started_at"]:
+                raise StateError("ATTEMPT_TIMESTAMP_INVALID")
+            if node["status"] != "ready" and (
+                env.get("attempt_id") != attempts[-1]["attempt_id"]
+                or env.get("claim_digest") != attempts[-1]["claim_digest"]
+            ):
+                raise StateError("ATTEMPT_STATE_INVALID")
+        elif node["started_at"] is not None:
+            raise StateError("ATTEMPT_TIMESTAMP_INVALID")
+        if node["status"] in TERMINAL - {"skipped"}:
+            if (not attempts or node["finished_at"] != attempts[-1]["finished_at"]
+                    or attempts[-1]["outcome"] != node["status"]):
+                raise StateError("ATTEMPT_TIMESTAMP_INVALID")
+        elif node["status"] == "ready" and attempts and attempts[-1]["outcome"] not in {"failed", "timed_out"}:
+            raise StateError("ATTEMPT_HISTORY_INVALID")
+        elif node["status"] != "skipped" and node["finished_at"] is not None:
+            raise StateError("ATTEMPT_TIMESTAMP_INVALID")
+
+
+def _attempt_intervals(connection: sqlite3.Connection, branch_id: str) -> List[Tuple[int, int]]:
+    intervals = []
+    for attempt in connection.execute(
+        "SELECT started_at,finished_at FROM branch_attempts WHERE branch_id=? ORDER BY attempt_number",
+        (branch_id,),
+    ):
+        if attempt["finished_at"] is None:
+            continue
+        intervals.append((timestamp_microseconds(attempt["started_at"]), timestamp_microseconds(attempt["finished_at"])))
+    return intervals
+
+
+def _semantic_edges(connection: sqlite3.Connection, run_id: str) -> Set[Tuple[str, str]]:
+    edges: Set[Tuple[str, str]] = set()
+    for response in _operation_responses(connection, run_id):
+        if response.get("code") != "JOIN_ADVANCED":
+            continue
+        join = connection.execute("SELECT * FROM joins WHERE join_id=?", (response["join_id"],)).fetchone()
+        if join is None:
+            raise StateError("TOPOLOGY_HISTORY_INVALID")
+        for member in join_members(connection, join["join_id"]):
+            for successor in response.get("successor_branch_ids", []):
+                edges.add((member["branch_id"], successor))
+    for row in connection.execute(
+        """SELECT d.before_branch_id,d.after_branch_id FROM fanout_dependencies d
+        JOIN fanouts f ON f.fanout_id=d.fanout_id WHERE f.run_id=?""", (run_id,)
+    ):
+        edges.add((row["before_branch_id"], row["after_branch_id"]))
+    return edges
+
+
+def _critical_path(
+    branch_ids: Sequence[str], weights: Mapping[str, int], edges: Set[Tuple[str, str]],
+) -> Tuple[List[str], int]:
+    selected = set(branch_ids)
+    incoming = {branch_id: set() for branch_id in branch_ids}
+    outgoing = {branch_id: set() for branch_id in branch_ids}
+    for before, after in edges:
+        if before in selected and after in selected:
+            incoming[after].add(before)
+            outgoing[before].add(after)
+    ready = sorted(branch_id for branch_id in branch_ids if not incoming[branch_id])
+    order: List[str] = []
+    remaining = {branch_id: set(values) for branch_id, values in incoming.items()}
+    while ready:
+        current = ready.pop(0)
+        order.append(current)
+        for successor in sorted(outgoing[current]):
+            remaining[successor].discard(current)
+            if not remaining[successor] and successor not in order and successor not in ready:
+                ready.append(successor)
+                ready.sort()
+    if len(order) != len(branch_ids):
+        raise StateError("TIMING_GRAPH_INVALID")
+    best: Dict[str, Tuple[int, Tuple[str, ...]]] = {}
+    for branch_id in order:
+        candidates = [best[predecessor] for predecessor in incoming[branch_id]]
+        if candidates:
+            previous_weight, previous_path = sorted(candidates, key=lambda item: (-item[0], item[1]))[0]
+        else:
+            previous_weight, previous_path = 0, ()
+        best[branch_id] = (previous_weight + weights.get(branch_id, 0), previous_path + (branch_id,))
+    if not best:
+        return [], 0
+    duration, path = sorted(best.values(), key=lambda item: (-item[0], item[1]))[0]
+    return list(path), duration
+
+
+def _group_timing(
+    connection: sqlite3.Connection, nodes: Sequence[Mapping[str, Any]],
+    edges: Set[Tuple[str, str]], complete: bool,
+) -> Dict[str, Any]:
+    attempts = [
+        (node["branch_id"], interval)
+        for node in nodes for interval in _attempt_intervals(connection, node["branch_id"])
+    ]
+    starts = [interval[0] for _, interval in attempts]
+    lifecycle_finishes = [timestamp_microseconds(node["finished_at"]) for node in nodes if node["finished_at"]]
+    result: Dict[str, Any] = {
+        "timing_complete": complete,
+        "started_at": min((attempt["started_at"] for node in nodes for attempt in connection.execute(
+            "SELECT started_at FROM branch_attempts WHERE branch_id=?", (node["branch_id"],)
+        )), key=timestamp_microseconds, default=None),
+        "finished_at": max((node["finished_at"] for node in nodes if node["finished_at"]), key=timestamp_microseconds, default=None),
+        "wall_time_ms": None, "active_duration_ms": None, "overlap_time_ms": None,
+        "slowest_branch": None, "critical_path": None,
+    }
+    if not complete or not attempts:
+        return result
+    start = min(starts)
+    finish = max(lifecycle_finishes)
+    intervals = [interval for _, interval in attempts]
+    points = sorted({point for interval in intervals for point in interval})
+    overlap = sum(
+        right - left for left, right in zip(points, points[1:])
+        if sum(1 for start_value, finish_value in intervals if start_value <= left < finish_value) >= 2
+    )
+    active_by_branch = {
+        node["branch_id"]: sum(end - begin for begin, end in _attempt_intervals(connection, node["branch_id"]))
+        for node in nodes
+    }
+    slowest_id = sorted(active_by_branch, key=lambda branch_id: (-active_by_branch[branch_id], branch_id))[0]
+    path, path_duration = _critical_path(list(active_by_branch), active_by_branch, edges)
+    result.update({
+        "wall_time_ms": (finish - start) // 1000,
+        "active_duration_ms": sum(active_by_branch.values()) // 1000,
+        "overlap_time_ms": overlap // 1000,
+        "slowest_branch": {"branch_id": slowest_id, "active_duration_ms": active_by_branch[slowest_id] // 1000},
+        "critical_path": {"branch_ids": path, "active_duration_ms": path_duration // 1000},
+    })
+    return result
+
+
+def compute_timing(connection: sqlite3.Connection, run: Mapping[str, Any]) -> Dict[str, Any]:
+    """Compute deterministic wall-clock metrics from validated schema-5 attempt history."""
+    nodes = connection.execute("SELECT * FROM nodes WHERE run_id=? ORDER BY branch_id", (run["run_id"],)).fetchall()
+    edges = _semantic_edges(connection, run["run_id"])
+    branch_metrics: Dict[str, Dict[str, Any]] = {}
+    for node in nodes:
+        attempts = connection.execute(
+            "SELECT * FROM branch_attempts WHERE branch_id=? ORDER BY attempt_number", (node["branch_id"],)
+        ).fetchall()
+        settled = node["status"] in TERMINAL
+        executed = bool(attempts)
+        active_us = sum(
+            timestamp_microseconds(attempt["finished_at"]) - timestamp_microseconds(attempt["started_at"])
+            for attempt in attempts if attempt["finished_at"] is not None
+        ) if settled and executed else None
+        wall_us = (
+            timestamp_microseconds(node["finished_at"]) - timestamp_microseconds(node["started_at"])
+            if settled and executed else None
+        )
+        branch_metrics[node["branch_id"]] = {
+            "started_at": node["started_at"], "finished_at": node["finished_at"],
+            "wall_time_ms": wall_us // 1000 if wall_us is not None else None,
+            "active_duration_ms": active_us // 1000 if active_us is not None else None,
+            "attempt_count": len(attempts), "timing_complete": settled,
+        }
+    stages = []
+    groups = sorted({(node["stage"], node["generation"]) for node in nodes})
+    for stage, generation in groups:
+        stage_nodes = [node for node in nodes if node["stage"] == stage and node["generation"] == generation]
+        complete = all(node["status"] in TERMINAL for node in stage_nodes)
+        timing = _group_timing(connection, stage_nodes, edges, complete)
+        timing.update({"stage": stage, "generation": generation})
+        stages.append(timing)
+    overall_complete = run["status"] in {"blocked", "complete", "aborted"} and all(
+        node["status"] in TERMINAL for node in nodes
+    )
+    overall = _group_timing(connection, nodes, edges, overall_complete)
+    run_started = timestamp_microseconds(run["started_at"])
+    run_finished = timestamp_microseconds(run["finished_at"]) if run["finished_at"] else None
+    return {
+        "clock_basis": "utc_wall", "branches": branch_metrics,
+        "run": {
+            "started_at": run["started_at"], "finished_at": run["finished_at"],
+            "wall_time_ms": (run_finished - run_started) // 1000 if run_finished is not None else None,
+            "timing_complete": run_finished is not None,
+        },
+        "stages": stages, "overall": overall,
+    }
 
 
 def join_members(connection: sqlite3.Connection, join_id: str) -> List[sqlite3.Row]:
@@ -661,7 +1111,10 @@ def _verify_semantic_state(
     _validate_execution_plan(connection, run, task)
     _validate_nodes(connection, run, task, policy)
     _validate_joins(connection, run, policy)
+    _validate_reconstructed_graph(connection, run)
     _validate_route_and_topology(connection, run, task, policy)
+    _validate_fanouts(connection, run)
+    _validate_attempts(connection, run)
     try:
         stored_policy = json.loads(run["policy_json"])
     except json.JSONDecodeError:
