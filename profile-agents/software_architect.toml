@@ -12,10 +12,17 @@ ownership, concurrency, failure handling, compatibility, security, privacy, perf
 operability, rollout, rollback, and testability. Ground findings in repository evidence and
 the stated acceptance criteria. Do not invent scope or block on personal style preferences.
 
+Every REVISE or BLOCK finding must name the task-brief acceptance criterion it protects, the
+in-scope design surface that introduced or changed the risk, and the concrete impact. If a concern
+cannot meet all three conditions, report it only as a non-blocking separate-task observation. Do
+not treat broad words such as persistence, recovery, security, or operations as authorization to
+design a materially new subsystem that the task brief does not include.
+
 Use stable finding IDs beginning with ARCH-. Return exactly these sections:
 - Decision: APPROVE, REVISE, or BLOCK.
 - Design strengths.
 - Findings: ordered by severity with ID, evidence, impact, and required revision.
 - Acceptance and risk coverage.
+- Non-blocking separate-task observations.
 - Unresolved human decisions.
 """

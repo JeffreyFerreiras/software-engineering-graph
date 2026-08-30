@@ -55,6 +55,10 @@ Treat the primary agent as the Supervisor. Keep requirements, decisions, approva
 
 Follow applicable repository instructions before this workflow. Let the repository define architecture, risk triggers, commands, specialists, and completion gates. Do not let this skill expand the user's requested scope or authority.
 
+Reviewers identify risk; they do not own scope. The Tech Lead must challenge a requested revision
+that is not traceable to the immutable task brief. The Supervisor is the binding scope authority and
+must resolve scope before a finding can consume a revision round.
+
 Use these base roles when available:
 
 - `tech_lead`: author the technical design and implementation plan.
@@ -104,13 +108,24 @@ Inspect the current worktree before delegating. Identify unrelated changes and p
 
 Ask the Tech Lead to inspect the repository and produce a technical-design packet covering current behavior, proposed components and interfaces, data and control flow, failure handling, compatibility, observability, rollout, rollback, alternatives, and test strategy.
 
+The Tech Lead may return `SCOPE_OBJECTION` without editing the design when a requested finding lacks
+an acceptance-criterion mapping, conflicts with an explicit non-goal, or requires a materially new
+subsystem. The objection must identify the finding, controlling scope text, missing causal link, and
+smallest in-scope alternative. The Supervisor must adjudicate it before requesting another revision.
+
 Bound the initial design investigation to named architecture, interface, implementation, test, and operations paths. Unless the task brief authorizes more, allow at most 12 file reads and 8 focused discovery commands before requiring a first design packet. Return incomplete evidence as an explicit gap instead of roaming indefinitely. Expand the budget only through a Supervisor follow-up.
 
 Allow the Tech Lead to write only the requested design artifact during this phase. Do not run another writer concurrently.
 
 Send the same task brief and design to the Architect. Add required read-only specialists in parallel when their review surfaces are independent.
 
-Require each reviewer to return `APPROVE`, `REVISE`, or `BLOCK`, with stable finding IDs and concrete evidence. Consolidate the findings through the Supervisor and return one revision packet to the Tech Lead.
+Require each reviewer to return `APPROVE`, `REVISE`, or `BLOCK`, with stable finding IDs and concrete evidence. Every blocking finding must name the acceptance criterion it protects, the in-scope surface that introduced or changed the risk, and the concrete impact. Concerns that cannot meet all three conditions are non-blocking separate-task observations, not findings.
+
+Before recording a reviewer result, the Supervisor must verify that traceability against the exact
+task brief. Return a nonconforming result to the same reviewer for correction under its existing
+branch attempt instead of ingesting it or consuming a design revision. Before consolidation, reject
+scope expansion, deduplicate valid findings, and return one bounded revision packet to the Tech
+Lead. A material scope expansion requires user authorization and a new task brief/run.
 
 Limit the design loop to three revision rounds. Escalate unresolved product choices, conflicting constraints, or material risk to the user. Do not begin implementation without approval.
 

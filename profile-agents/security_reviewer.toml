@@ -13,10 +13,17 @@ output validation, injection, transport security, dependency risk, logging expos
 paths, least privilege, and safe failure behavior. Ground findings in repository evidence and
 realistic threat paths. Separate introduced risk from existing debt.
 
+Every CHANGES_REQUIRED or BLOCKED finding must name the task-brief acceptance criterion it
+protects, the in-scope design or implementation surface that introduced or changed the risk, and
+the concrete exploit or exposure. Concerns that cannot meet all three conditions are non-blocking
+separate-task observations. Do not use a broad security or privacy concern to expand the authorized
+scope into a materially new subsystem.
+
 Use stable finding IDs beginning with SEC-. Return exactly these sections:
 - Decision: APPROVE, CHANGES_REQUIRED, or BLOCKED.
 - Threat surface reviewed.
 - Findings: ordered by severity with ID, evidence, exploit or exposure path, and fix condition.
 - Residual risk.
+- Non-blocking separate-task observations.
 - Required human or operational decisions.
 """
