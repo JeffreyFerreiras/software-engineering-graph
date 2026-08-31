@@ -1,60 +1,98 @@
 # Software Engineering Graph
 
-This repository is authoritative for the Software Engineering Graph workflow and its seven reusable
-profile-agent definitions. The installed profile remains untouched unless separately approved work
-explicitly changes it.
+Software Engineering Graph is an **AI-agent skill for Codex**. It organizes complex software work
+across specialized AI agents and makes scope, human approval, design, implementation, independent
+review, and testing explicit.
 
-## Requirements
+Use it for non-trivial features, fixes, refactors, migrations, integrations, and
+production-sensitive work. Documentation and mechanical changes can use a smaller, faster route.
+
+This repository is authoritative for the AI skill, its local workflow engine, and its seven reusable
+agent-role definitions. It is not a general-purpose task scheduler, CI service, or security boundary.
+The installed profile remains untouched unless separately approved work explicitly changes it.
+
+## What the skill does
+
+The skill keeps the primary Codex agent in charge as the **Supervisor**. The Supervisor scopes the
+request, proposes an execution plan, asks the human to approve that plan, and then coordinates only
+the roles the work needs:
+
+- **Impact Mapper** classifies the change and selects the minimum safe route.
+- **Tech Lead** designs the change and plans its implementation.
+- **Software Architect** independently reviews the design.
+- **Senior Engineer** is the sole implementation writer.
+- **Code Reviewer** independently reviews the completed change.
+- **Test Engineer** verifies the acceptance criteria and regression evidence.
+- **Security Reviewer** joins when security, privacy, identity, secrets, or trust boundaries are
+  affected.
+
+The workflow is deliberately bounded. It limits design and repair loops, separates writing from
+review, records evidence, and returns unresolved product or risk decisions to the human.
+
+## How the AI agents work together
+
+1. The Supervisor turns the request into a scoped task brief with acceptance criteria and non-goals.
+2. The skill sizes the work and proposes exact AI model and reasoning-effort assignments.
+3. The human approves the plan before any specialist agent starts.
+4. The selected agents design, implement, review, and test through bounded handoffs.
+5. The Supervisor closes the run only when the approved criteria and required checks have evidence.
+
+A local control ledger tracks assignments, approvals, retries, active-work ownership, and recovery
+so the workflow behaves consistently and deterministically. It coordinates agents but does not
+execute them. The Supervisor is the sole ledger operator and remains the user-facing decision maker.
+
+## Using the skill
+
+In a Codex environment where this skill is installed, ask Codex to use
+`software-engineering-graph` for the task. For example:
+
+> Use the software-engineering-graph skill for this feature. Before any specialist agents start,
+> show me the exact AI-agent roles, models, and reasoning-effort levels you propose, and ask me to
+> approve the plan.
+
+The consumer repository supplies its own `.codex/engineering-graph.json` policy, including the local
+commands that count as required checks. This source repository does not install itself or modify a
+consumer repository, an installed profile, or any remote system without separately approved scope.
+
+## Repository map
+
+- [`SKILL.md`](SKILL.md) defines the AI skill and its operating contract.
+- [`profile-agents/`](profile-agents/) contains the seven reusable Codex role profiles.
+- [`graph_engine/`](graph_engine/) implements deterministic planning, validation, and local state.
+- [`scripts/graphctl.py`](scripts/graphctl.py) is the command-line adapter used by the Supervisor.
+- [`references/`](references/) contains schemas and workflow contracts.
+- [`docs/technical-design.md`](docs/technical-design.md) explains the internal architecture and
+  compatibility guarantees.
+- [`tests/`](tests/) contains the standalone acceptance and behavior tests.
+
+## Requirements and boundaries
 
 - Python 3.9 or newer
 - Python standard library only
+- Local operation only, with no CI or remote automation added by this repository
+- State schema 5; older schema 2, 3, and 4 runs fail closed and must be restarted
 
-## Local validation
+On Windows, the ledger requires `--ack-degraded-permissions` because Python cannot prove exclusive
+profile permissions. `--ack-degraded-durability` is only for environments where directory syncing is
+unavailable and that limitation is acceptable. These flags acknowledge platform limitations; they
+do not grant extra authority.
 
-Operational commands act on an explicitly selected consumer repository with its own
-`.codex/engineering-graph.json` policy. Repository development and validation do not read, compare,
-install, or update profile files.
+## Contributor validation
 
-This is intentionally a local workflow. It does not add CI or remote automation. Consumer policies
-may define each required check's `argv` and optional `timeout_seconds`; run those checks locally with
-`graphctl check run`. A check PASS is accepted only when the local runner records a ledger receipt
-that matches the command, repository worktree, host, and actor.
-
-The ledger also fences retries with durable per-claim attempt records, exposes expiring branch leases with a
-heartbeat command, records local approval attestations, and enforces a deterministic security gate
-for critical delivery tasks. Each run now creates a T-shirt-sized execution plan with exact model and
-reasoning-effort assignments before any branch can be claimed. `record plan-approval` is required before
-Impact Mapper or any other agent executes; the approved plan is included in every branch envelope.
-
-Before acting, the Senior Engineer and Code Reviewer inspect only session-exposed and
-repository-instruction-declared skills, select and fully read the smallest relevant set, and report
-their selection or `None` under `Skill usage`. Skills may change method only; they do not expand role
-authority, approved scope, writable files, tests, delegation, external effects, or profile and consumer
-permissions. The Code Reviewer remains read-only and the Senior Engineer remains the sole code writer.
-
-The operational order is `init` with an optional `--size`, review the returned plan, record
-`record plan-approval`, and only then use `next --claim`. Before any multi-member fixed review fan-out,
-`status` requires one immutable `record fanout-assessment`. Its manifest must cover every member's exact
-or subtree writable paths, mutable-state references, exclusive devices, constrained service units and
-capacity, verified evidence, and any ordering dependencies. Independent roots then become ready together;
-ordered successors wait for settled predecessors. This is resource safety for the fixed graph, not a
-general DAG scheduler or agent executor.
-
-These changes use state schema 5. Existing schema-2, schema-3, or schema-4 runs fail closed and must be
-started again; no automatic migration is performed. `status` reports UTC wall-clock run, stage, branch,
-overlap, slowest-branch, and semantic critical-path metrics from immutable attempt intervals.
-
-Run the focused checks with bytecode disabled:
+Run only the focused acceptance suite below, with bytecode disabled:
 
 ```powershell
 $env:PYTHONDONTWRITEBYTECODE = '1'
 python -m unittest -v tests.test_contracts tests.test_planner tests.test_validator tests.test_state tests.test_cli tests.test_graph_hardening
 ```
 
-After the Supervisor approves the final review, run the local read-only hygiene check separately and
-last:
+After final review, run the local read-only hygiene check separately and last:
 
 ```powershell
 $env:PYTHONDONTWRITEBYTECODE = '1'
 python -m unittest -v tests.test_standalone_acceptance.StandaloneAcceptanceTests.test_hygiene
 ```
+
+The hygiene check verifies forbidden artifacts, required ignore patterns, the exact seven role files,
+repository authority wording, skill-discovery guardrails, and stale external requirements. It does
+not repair files or inspect an installed profile or consumer repository.
