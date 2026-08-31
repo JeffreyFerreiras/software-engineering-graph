@@ -11,7 +11,7 @@ TSHIRT_SIZES = ("small", "medium", "large")
 # select a size-specific assignment, but it may not invent a model or effort.
 SIZE_ASSIGNMENTS: Dict[str, Dict[str, Tuple[str, str]]] = {
     "small": {
-        "impact_mapper": ("gpt-5.6-luna", "low"),
+        "impact_mapper": ("gpt-5.6-luna", "high"),
         "advisory_reviewer": ("gpt-5.6-luna", "low"),
         "tech_lead": ("gpt-5.6-luna", "medium"),
         "architect": ("gpt-5.6-luna", "high"),
@@ -25,7 +25,7 @@ SIZE_ASSIGNMENTS: Dict[str, Dict[str, Tuple[str, str]]] = {
         "supervisor": ("primary-thread", "inherited"),
     },
     "medium": {
-        "impact_mapper": ("gpt-5.6-luna", "medium"),
+        "impact_mapper": ("gpt-5.6-luna", "high"),
         "advisory_reviewer": ("gpt-5.6-sol", "xhigh"),
         "tech_lead": ("gpt-5.6-sol", "high"),
         "architect": ("gpt-5.6-sol", "xhigh"),
@@ -39,7 +39,7 @@ SIZE_ASSIGNMENTS: Dict[str, Dict[str, Tuple[str, str]]] = {
         "supervisor": ("primary-thread", "inherited"),
     },
     "large": {
-        "impact_mapper": ("gpt-5.6-sol", "high"),
+        "impact_mapper": ("gpt-5.6-luna", "high"),
         "advisory_reviewer": ("gpt-5.6-sol", "xhigh"),
         "tech_lead": ("gpt-5.6-sol", "xhigh"),
         "architect": ("gpt-5.6-sol", "max"),

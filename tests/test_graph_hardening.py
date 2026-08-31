@@ -226,7 +226,7 @@ class GraphHardeningTests(GraphCase):
             "--authority-ref", "authority:test", "--op-id", "plan-approval-1",
         )
         branch = self.claim()
-        self.assertEqual((branch["model"], branch["reasoning_effort"]), ("gpt-5.6-luna", "low"))
+        self.assertEqual((branch["model"], branch["reasoning_effort"]), ("gpt-5.6-luna", "high"))
 
     def test_rejected_execution_plan_blocks_the_run(self):
         initialized = self.initialize(approve=False)

@@ -1,4 +1,5 @@
 from graph_engine.config import load_policy
+from graph_engine.execution import SIZE_ASSIGNMENTS
 from graph_engine.ids import stable_id
 from graph_engine.planner import (
     NodeSpec, design_review_nodes, envelope, initial_route_nodes, validate_fanout_ordering,
@@ -8,6 +9,19 @@ from tests.test_support import GraphCase
 
 
 class PlannerTests(GraphCase):
+    def test_impact_mapper_always_uses_luna_with_high_reasoning(self):
+        assignments = {
+            size: roles["impact_mapper"] for size, roles in SIZE_ASSIGNMENTS.items()
+        }
+        self.assertEqual(
+            assignments,
+            {
+                "small": ("gpt-5.6-luna", "high"),
+                "medium": ("gpt-5.6-luna", "high"),
+                "large": ("gpt-5.6-luna", "high"),
+            },
+        )
+
     def test_every_route_has_exact_entry(self):
         policy, _ = load_policy(self.repo)
         expected = {"advisory": "advisory_reviewer", "design_only": "tech_lead", "full_delivery": "tech_lead", "fast_path": "senior_engineer"}
