@@ -5,7 +5,7 @@ import itertools
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from .ids import stable_id
-from .config import ENGINE_ROLE_CAPABILITIES
+from .config import ENGINE_RESEARCH_NODES, ENGINE_ROLE_CAPABILITIES
 from .execution import assignment_for, build_execution_plan
 
 
@@ -168,9 +168,17 @@ def bootstrap(policy: Mapping[str, Any]) -> NodeSpec:
     return make_node(policy, "impact_mapper", "bootstrap", 0)
 
 
+def design_research_nodes(policy: Mapping[str, Any], generation: int) -> List[NodeSpec]:
+    """Return the fixed, ordered research pair for a design generation."""
+    return [
+        make_node(policy, key, "research", generation)
+        for key in sorted(ENGINE_RESEARCH_NODES)
+    ]
+
+
 def initial_route_nodes(policy: Mapping[str, Any], route: str) -> List[NodeSpec]:
     if route in {"design_only", "full_delivery"}:
-        return [make_node(policy, "tech_lead", "design", 0)]
+        return design_research_nodes(policy, 0)
     if route == "fast_path":
         return [make_node(policy, "senior_engineer", "implementation", 0)]
     return [make_node(policy, "advisory_reviewer", "advisory", 0)]
@@ -259,11 +267,11 @@ def envelope(
     capabilities = [
         cap for cap in authority
         if (cap["effect"], cap["action"], cap["target_ref"]) in configured
-        and (spec.stage != "advisory" or cap["effect"] in {"filesystem_read", "external_read"})
+        and (spec.stage not in {"advisory", "research"} or cap["effect"] in {"filesystem_read", "external_read"})
     ]
     output_contract = dict(template["output_contract"])
     max_retries = int(template["max_retries"])
-    return {
+    result = {
         "schema_version": 1,
         "run_id": run_id,
         "branch_id": branch_id(run_id, policy_digest, spec),
@@ -294,3 +302,14 @@ def envelope(
         "started_at": None,
         "finished_at": None,
     }
+    if spec.key in ENGINE_RESEARCH_NODES:
+        totals = task["inspection_budget"]
+        first = spec.key == "design_research_architecture"
+        result["research_assignment"] = {
+            "focus": ENGINE_RESEARCH_NODES[spec.key],
+            "inspection_budget": {
+                key: (int(value) + 1) // 2 if first else int(value) // 2
+                for key, value in totals.items()
+            },
+        }
+    return result

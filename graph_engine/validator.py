@@ -18,8 +18,8 @@ from .evidence import reverify_artifact
 from .execution import build_execution_plan, plan_approval_digest
 from .ids import canonical_bytes, sha256_bytes, stable_id
 from .planner import (
-    NodeSpec, branch_id, delivery_review_nodes, design_review_nodes, envelope, fanout_id,
-    initial_route_nodes, validate_fanout_ordering,
+    NodeSpec, branch_id, delivery_review_nodes, design_research_nodes, design_review_nodes, envelope, fanout_id,
+    initial_route_nodes, revised_design_node, validate_fanout_ordering,
 )
 from .state import StateError, current_host_identity, repository_identity
 
@@ -33,6 +33,7 @@ DELIVERY_OUTCOMES = {0: "ACCEPT", 1: "REPAIR", 2: "REDESIGN", 3: "BLOCK"}
 JOIN_BINDINGS = {
     "design_inputs": ("dependency", "design"),
     "implementation": ("dependency", "delivery"),
+    "research_collection": ("collection", "research"),
     "design_collection": ("collection", "design"),
     "delivery_collection": ("collection", "delivery"),
     "design_consolidation": ("consolidation", "design"),
@@ -76,7 +77,8 @@ def _validate_reconstructed_graph(connection: sqlite3.Connection, run: Mapping[s
     expected_joins: Set[str] = set()
     expected_fanouts: Set[str] = set()
     advanced: Dict[str, Mapping[str, Any]] = {}
-    for response in _operation_responses(connection, run["run_id"]):
+    operation_responses = _operation_responses(connection, run["run_id"])
+    for response in operation_responses:
         branch = response.get("branch")
         if isinstance(branch, dict) and isinstance(branch.get("branch_id"), str):
             expected_nodes.add(branch["branch_id"])
@@ -98,6 +100,23 @@ def _validate_reconstructed_graph(connection: sqlite3.Connection, run: Mapping[s
     actual_joins = {row[0] for row in connection.execute("SELECT join_id FROM joins WHERE run_id=?", (run["run_id"],))}
     actual_fanouts = {row[0] for row in connection.execute("SELECT fanout_id FROM fanouts WHERE run_id=?", (run["run_id"],))}
     policy = json.loads(run["policy_json"])
+    research_successors = {
+        join["join_id"]: branch_id(
+            run["run_id"], run["policy_digest"], revised_design_node(policy, join["generation"])
+        )
+        for join in connection.execute(
+            "SELECT join_id,generation FROM joins WHERE run_id=? AND join_key='research_collection'",
+            (run["run_id"],),
+        )
+    }
+    for response in operation_responses:
+        successors = response.get("successor_branch_ids", [])
+        response_join = response.get("join_id")
+        for join_identifier, expected_successor in research_successors.items():
+            if expected_successor in successors and (
+                response.get("code") != "JOIN_ADVANCED" or response_join != join_identifier
+            ):
+                raise StateError("TOPOLOGY_HISTORY_INVALID")
     mapper = connection.execute(
         "SELECT * FROM nodes WHERE run_id=? AND node_key='impact_mapper'", (run["run_id"],)
     ).fetchone()
@@ -108,6 +127,12 @@ def _validate_reconstructed_graph(connection: sqlite3.Connection, run: Mapping[s
                 expected_nodes.add(branch_id(run["run_id"], run["policy_digest"], spec))
         except (TypeError, KeyError, json.JSONDecodeError):
             raise StateError("TOPOLOGY_HISTORY_INVALID")
+    for join_identifier, expected_successor in research_successors.items():
+        sealed = connection.execute(
+            "SELECT status FROM joins WHERE join_id=?", (join_identifier,)
+        ).fetchone()
+        if sealed is not None and sealed["status"] == "sealed":
+            expected_nodes.add(expected_successor)
     for node in connection.execute("SELECT * FROM nodes WHERE run_id=? AND status='succeeded'", (run["run_id"],)):
         required_join_key = None
         if node["node_key"] == "tech_lead":
@@ -148,6 +173,10 @@ def _validate_reconstructed_graph(connection: sqlite3.Connection, run: Mapping[s
         if join["status"] != "sealed":
             raise StateError("TOPOLOGY_HISTORY_INVALID")
         successors = witness.get("successor_branch_ids", [])
+        if join["join_key"] == "research_collection":
+            expected_successor = research_successors.get(join["join_id"])
+            if successors != [expected_successor]:
+                raise StateError("TOPOLOGY_HISTORY_INVALID")
         members = join_members(connection, join["join_id"])
         required_refs: Set[str] = set()
         if join["kind"] == "dependency":
@@ -540,6 +569,14 @@ def validate_join(connection: sqlite3.Connection, run: Mapping[str, Any], join: 
         if member["join_mandatory"] and member["status"] == "skipped":
             return {"join_status": "INVALID_STATE", "groups": groups}
     if join["kind"] == "collection":
+        if join["join_key"] == "research_collection":
+            retryable = [
+                member for member in members
+                if member["join_mandatory"] and member["status"] in {"failed", "timed_out"}
+                and member["retry_count"] < member["max_retries"]
+            ]
+            if retryable:
+                return {"join_status": "RETRY_REQUIRED", "groups": groups}
         result = "READY" if all(member["status"] in TERMINAL for member in members) else "NOT_READY"
         return {"join_status": result, "groups": groups}
     if any(member["status"] in {"pending", "ready", "running"} for member in members):
@@ -761,10 +798,12 @@ def _validate_nodes(connection: sqlite3.Connection, run: Mapping[str, Any], task
         immutable_keys = {
             "schema_version", "run_id", "branch_id", "node_instance_id", "node_key", "role",
             "model", "reasoning_effort", "mandatory", "generation", "inputs", "effect_capabilities", "output_contract",
-            "stopping_condition", "retry_count", "max_retries",
+            "stopping_condition", "retry_count", "max_retries", "research_assignment",
             "attempt_id", "claim_digest", "lease_expires_at",
         }
-        if set(stored_envelope) != set(expected_envelope) or any(stored_envelope[key] != expected_envelope[key] for key in immutable_keys):
+        if set(stored_envelope) != set(expected_envelope) or any(
+            stored_envelope.get(key) != expected_envelope.get(key) for key in immutable_keys
+        ):
             raise StateError("ENVELOPE_INVALID")
         if stored_envelope["status"] != node["status"] or stored_envelope["failure_code"] != node["failure_code"]:
             raise StateError("ENVELOPE_STATE_INVALID")
@@ -845,6 +884,22 @@ def _validate_nodes(connection: sqlite3.Connection, run: Mapping[str, Any], task
                         raise ContractError("result", "CONTROL_RESULT_MISMATCH")
             except ContractError:
                 raise StateError("TERMINAL_RESULT_INVALID")
+            if node["node_key"] in {
+                "design_research_architecture", "design_research_validation",
+            }:
+                if result.get("decision") is not None or result.get("findings"):
+                    raise StateError("TERMINAL_RESULT_INVALID")
+                if node["status"] == "succeeded" and not result.get("evidence"):
+                    raise StateError("TERMINAL_RESULT_INVALID")
+                for evidence_item in result.get("evidence", []):
+                    evidence_artifact = connection.execute(
+                        "SELECT kind,sha256 FROM artifacts WHERE ref=?",
+                        (evidence_item.get("ref"),),
+                    ).fetchone()
+                    if evidence_artifact is None or (
+                        evidence_artifact["kind"], evidence_artifact["sha256"]
+                    ) != (evidence_item.get("kind"), evidence_item.get("sha256")):
+                        raise StateError("TERMINAL_RESULT_INVALID")
             artifact_ref = stored_envelope.get("artifact_ref")
             redesign_without_artifact = (
                 node["node_key"] == "senior_engineer"
@@ -874,6 +929,8 @@ def _expected_join_node_keys(join: Mapping[str, Any], run: Mapping[str, Any], po
         return {"tech_lead"}
     if key == "implementation":
         return {"senior_engineer"}
+    if key == "research_collection":
+        return {"design_research_architecture", "design_research_validation"}
     if key == "design_collection":
         return {"architect"} | {
             policy["specialists"][tag]["node_key"] for tag in json.loads(run["selected_tags_json"] or "[]")
@@ -1001,6 +1058,8 @@ def _validate_route_and_topology(
         allowed_bindings.add(("advisory_reviewer", "advisory"))
     if route in {"design_only", "full_delivery"} or fast_redesign:
         allowed_bindings.update({
+            ("design_research_architecture", "research"),
+            ("design_research_validation", "research"),
             ("tech_lead", "design"), ("architect", "design"),
             ("supervisor_design_consolidation", "design"),
         })
@@ -1025,10 +1084,19 @@ def _validate_route_and_topology(
             raise StateError("TOPOLOGY_STATE_INVALID")
 
     tech_nodes = [node for node in nodes if node["node_key"] == "tech_lead"]
+    research_nodes = [node for node in nodes if node["stage"] == "research"]
     senior_nodes = [node for node in nodes if node["node_key"] == "senior_engineer"]
     tech_generations = sorted({node["generation"] for node in tech_nodes})
+    research_generations = sorted({node["generation"] for node in research_nodes})
     senior_generations = sorted({node["generation"] for node in senior_nodes})
-    if route in {"design_only", "full_delivery"} and (not tech_generations or tech_generations[0] != 0):
+    if route in {"design_only", "full_delivery"} and (not research_generations or research_generations[0] != 0):
+        raise StateError("TOPOLOGY_STATE_INVALID")
+    if fast_redesign and (not research_generations or research_generations[0] != 1):
+        raise StateError("TOPOLOGY_STATE_INVALID")
+    if tech_generations and (
+        (route in {"design_only", "full_delivery"} and tech_generations[0] != 0)
+        or (fast_redesign and tech_generations[0] != 1)
+    ):
         raise StateError("TOPOLOGY_STATE_INVALID")
     if route == "fast_path" and (not senior_generations or senior_generations[0] != 0):
         raise StateError("TOPOLOGY_STATE_INVALID")
@@ -1040,9 +1108,26 @@ def _validate_route_and_topology(
         first_design = tech_generations[0]
         if tech_generations != list(range(first_design, tech_generations[-1] + 1)):
             raise StateError("GENERATION_STATE_INVALID")
+    if research_generations:
+        first_research = research_generations[0]
+        if research_generations != list(range(first_research, research_generations[-1] + 1)):
+            raise StateError("GENERATION_STATE_INVALID")
+        for generation in research_generations:
+            research_join = connection.execute(
+                "SELECT status FROM joins WHERE run_id=? AND join_key='research_collection' AND generation=?",
+                (run["run_id"], generation),
+            ).fetchone()
+            if research_join is None:
+                raise StateError("TOPOLOGY_STATE_INVALID")
+            if research_join["status"] != "sealed" and any(
+                node["generation"] == generation for node in tech_nodes
+            ):
+                raise StateError("TOPOLOGY_STATE_INVALID")
+    if tech_generations and not set(tech_generations).issubset(set(research_generations)):
+        raise StateError("GENERATION_STATE_INVALID")
     if senior_generations and senior_generations != list(range(0, senior_generations[-1] + 1)):
         raise StateError("GENERATION_STATE_INVALID")
-    design_generation = tech_generations[-1] if tech_generations else 0
+    design_generation = max([0] + tech_generations + research_generations)
     if run["design_generation"] != design_generation:
         raise StateError("GENERATION_STATE_INVALID")
 
@@ -1053,7 +1138,7 @@ def _validate_route_and_topology(
         source_prefix = "ledger:" + consolidation_branch_id + "#sha256="
         if any(
             any(item["ref"].startswith(source_prefix) for item in json.loads(node["envelope_json"])["inputs"])
-            for node in tech_nodes
+            for node in tech_nodes + research_nodes
         ):
             reserved_implementation_generations.append(generation + 1)
     expected_implementation_generation = max(
@@ -1063,8 +1148,11 @@ def _validate_route_and_topology(
         raise StateError("GENERATION_STATE_INVALID")
 
     design_generation_set = set(tech_generations)
+    research_generation_set = set(research_generations)
     implementation_generation_set = set(senior_generations)
     for node in nodes:
+        if node["stage"] == "research" and node["generation"] not in research_generation_set:
+            raise StateError("GENERATION_STATE_INVALID")
         if node["stage"] == "design" and node["generation"] not in design_generation_set:
             raise StateError("GENERATION_STATE_INVALID")
         if node["stage"] == "delivery" and node["generation"] not in implementation_generation_set:

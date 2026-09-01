@@ -27,7 +27,8 @@ from .ids import canonical_bytes, sha256_bytes
 from .planner import (
     JoinSpec, NodeSpec, bootstrap, branch_id, closure_join, collection_join,
     consolidation_join, consolidation_node, delivery_review_nodes, design_review_nodes,
-    envelope, fanout_id, implementation_node, initial_route_nodes, join_id, next_join_for_success,
+    design_research_nodes, envelope, fanout_id, implementation_node, initial_route_nodes, join_id,
+    next_join_for_success,
     revised_design_node, validate_fanout_ordering,
 )
 from .state import (
@@ -182,6 +183,26 @@ def _insert_fanout(
         (identifier, run["run_id"], stage, generation, "awaiting", json.dumps(member_ids, separators=(",", ":"))),
     )
     return identifier
+
+
+def _insert_research_generation(
+    store: StateStore, connection: sqlite3.Connection, run: Mapping[str, Any],
+    policy: Mapping[str, Any], task: Mapping[str, Any], generation: int,
+    inputs: Sequence[Mapping[str, Any]],
+) -> Dict[str, List[str]]:
+    """Insert the fixed research pair, collection join, and assessed-pending fan-out."""
+    specs = design_research_nodes(policy, generation)
+    rows = [
+        _insert_spec(store, connection, run, policy, task, spec, inputs, status="pending")
+        for spec in specs
+    ]
+    join = _insert_join(store, connection, run, collection_join("research", generation, specs))
+    fanout = _insert_fanout(connection, run, "research", generation, rows)
+    return {
+        "branch_ids": [row["branch_id"] for row in rows],
+        "join_ids": [join["join_id"]],
+        "fanout_ids": [fanout],
+    }
 
 
 def _branch_settled(branch: Mapping[str, Any]) -> bool:
@@ -350,6 +371,7 @@ def _record_branch_result(
     def action(conn: sqlite3.Connection, current: sqlite3.Row, revision: int) -> Dict[str, Any]:
         successor_ids: List[str] = []
         created_join_ids: List[str] = []
+        created_fanout_ids: List[str] = []
         current_branch = conn.execute("SELECT * FROM nodes WHERE branch_id=?", (args.branch_id,)).fetchone()
         if current_branch is None:
             raise StateError("BRANCH_NOT_FOUND")
@@ -386,8 +408,16 @@ def _record_branch_result(
             )
             fresh_run = conn.execute("SELECT * FROM runs WHERE run_id=?", (current["run_id"],)).fetchone()
             inputs = _context_inputs(conn, fresh_run, [])
-            for spec in initial_route_nodes(policy, impact["route_label"]):
-                successor_ids.append(_insert_spec(store, conn, fresh_run, policy, task, spec, inputs)["branch_id"])
+            if impact["route_label"] in {"design_only", "full_delivery"}:
+                research = _insert_research_generation(
+                    store, conn, fresh_run, policy, task, 0, inputs,
+                )
+                successor_ids.extend(research["branch_ids"])
+                created_join_ids.extend(research["join_ids"])
+                created_fanout_ids.extend(research["fanout_ids"])
+            else:
+                for spec in initial_route_nodes(policy, impact["route_label"]):
+                    successor_ids.append(_insert_spec(store, conn, fresh_run, policy, task, spec, inputs)["branch_id"])
         else:
             validated = validate_result_manifest(snapshot.parsed, branch_contract)
             manifest = validated
@@ -468,7 +498,8 @@ def _record_branch_result(
         return {
             "code": "BRANCH_RESULT_RECORDED", "branch_id": args.branch_id,
             "branch_status": result_status, "successor_branch_ids": sorted(successor_ids),
-            "created_join_ids": sorted(created_join_ids), "promoted_branch_ids": promoted,
+            "created_join_ids": sorted(created_join_ids), "created_fanout_ids": sorted(created_fanout_ids),
+            "promoted_branch_ids": promoted,
         }
 
     return store.mutate(
@@ -1036,6 +1067,22 @@ def command_join_advance(
         if join["kind"] == "closure":
             raise StateError("COMPLETE_COMMAND_REQUIRED")
         members = join_members(conn, join["join_id"])
+        if join["join_key"] == "research_collection" and any(
+            member["status"] != "succeeded" for member in members
+        ):
+            # Leave the failed collection open, matching the existing blocked-join
+            # history shape. This avoids materializing a misleading evidence
+            # collection when a mandatory research branch did not succeed.
+            conn.execute(
+                "UPDATE runs SET status='blocked',blocked_reason='MANDATORY_RESEARCH_FAILED',finished_at=COALESCE(finished_at,?) WHERE run_id=?",
+                (utc_now(), current["run_id"]),
+            )
+            return {
+                "code": "GRAPH_BLOCKED", "status": "blocked",
+                "reason": "MANDATORY_RESEARCH_FAILED", "join_id": join["join_id"],
+                "outcome": "BLOCK", "successor_branch_ids": [],
+                "created_join_ids": [], "created_fanout_ids": [],
+            }
         frozen = canonical_collection_members(conn, members)
         collection_artifact = None
         collection_manifest = None
@@ -1056,6 +1103,21 @@ def command_join_advance(
             if collection_artifact is None or collection_manifest is None:
                 raise StateError("COLLECTION_ARTIFACT_INVALID")
             persist_artifact(conn, current["run_id"], collection_artifact)
+            if join["join_key"] == "research_collection":
+                # Research is a pre-design evidence gate. The Tech Lead is
+                # created only after its canonical collection has been sealed.
+                spec = revised_design_node(policy, join["generation"])
+                inputs = _context_inputs(conn, current, members)
+                collection_input = collection_artifact.as_input()
+                collection_input["content"] = collection_manifest
+                inputs.append(collection_input)
+                node = _insert_spec(store, conn, current, policy, task, spec, inputs)
+                successor_ids.append(node["branch_id"])
+                return {
+                    "code": "JOIN_ADVANCED", "join_id": join["join_id"],
+                    "outcome": "RESEARCH_SEALED", "successor_branch_ids": sorted(successor_ids),
+                    "created_join_ids": [], "created_fanout_ids": [],
+                }
             spec = consolidation_node(policy, join["stage"], join["generation"])
             inputs = _context_inputs(conn, current, [], include_design=join["stage"] == "delivery", include_implementation=join["stage"] == "delivery")
             collection_input = collection_artifact.as_input()
@@ -1116,8 +1178,12 @@ def command_join_advance(
                     outcome = "BLOCK"
                 else:
                     generation = join["generation"] + 1
-                    spec = revised_design_node(policy, generation)
-                    successor_ids.append(_insert_spec(store, conn, current, policy, task, spec, design_context)["branch_id"])
+                    research = _insert_research_generation(
+                        store, conn, current, policy, task, generation, design_context,
+                    )
+                    successor_ids.extend(research["branch_ids"])
+                    created_join_ids.extend(research["join_ids"])
+                    created_fanout_ids.extend(research["fanout_ids"])
                     conn.execute("UPDATE runs SET design_generation=? WHERE run_id=?", (generation, current["run_id"]))
             elif join["stage"] == "design" and outcome == "APPROVE":
                 if route == "design_only":
@@ -1147,8 +1213,12 @@ def command_join_advance(
                 else:
                     design_generation = current["design_generation"] + 1
                     implementation_generation = current["implementation_generation"] + 1
-                    spec = revised_design_node(policy, design_generation)
-                    successor_ids.append(_insert_spec(store, conn, current, policy, task, spec, delivery_context)["branch_id"])
+                    research = _insert_research_generation(
+                        store, conn, current, policy, task, design_generation, delivery_context,
+                    )
+                    successor_ids.extend(research["branch_ids"])
+                    created_join_ids.extend(research["join_ids"])
+                    created_fanout_ids.extend(research["fanout_ids"])
                     conn.execute("UPDATE runs SET design_generation=?,implementation_generation=? WHERE run_id=?", (design_generation, implementation_generation, current["run_id"]))
             elif join["stage"] == "delivery" and outcome == "ACCEPT":
                 created_join_ids.append(_insert_join(store, conn, current, closure_join(NodeSpec(

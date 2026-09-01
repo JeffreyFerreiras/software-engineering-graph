@@ -88,11 +88,13 @@ class CliGoldenTraceTests(GraphCase):
         configure_limit(baseline.size_bytes)
         at_limit, _, _ = ready_collection()
         self.assertEqual(at_limit.size_bytes, baseline.size_bytes)
+        design_join = self.open_join("design_collection")
         self.advance("design_collection")
         database = self.store.db_path("albanian-live-translate", "RUN-1")
         with self.store.connect(database) as connection:
             persisted = connection.execute(
-                "SELECT size_bytes FROM artifacts WHERE kind='collection'"
+                "SELECT size_bytes FROM artifacts WHERE kind='collection' AND ref LIKE ?",
+                ("ledger:" + design_join["join_id"] + "#%",),
             ).fetchone()
         self.assertEqual(persisted["size_bytes"], baseline.size_bytes)
 
@@ -112,13 +114,185 @@ class CliGoldenTraceTests(GraphCase):
         self.assertEqual((status["status"], status["state_revision"]), ("active", revision))
         with self.store.connect(database) as connection:
             artifact_count = connection.execute(
-                "SELECT COUNT(*) FROM artifacts WHERE kind='collection'"
+                "SELECT COUNT(*) FROM artifacts WHERE kind='collection' AND ref LIKE ?",
+                ("ledger:" + self.open_join("design_collection")["join_id"] + "#%",),
             ).fetchone()[0]
             stored_join = connection.execute(
                 "SELECT status,result_json FROM joins WHERE join_key='design_collection'"
             ).fetchone()
         self.assertEqual(artifact_count, 0)
         self.assertEqual((stored_join["status"], stored_join["result_json"]), ("open", None))
+
+    def _research_started(self):
+        self.initialize("delivery", "full_delivery")
+        self.impact("full_delivery")
+        status = self.graphctl("status", "--run-id", "RUN-1")
+        self.assertEqual(status["next_action"]["kind"], "record_fanout_assessment")
+        self.assertEqual(status["next_action"]["stage"], "research")
+        fanout = next(item for item in status["fanouts"] if item["stage"] == "research")
+        self.assess_fanout(fanout["fanout_id"])
+        return fanout
+
+    def _failed_research(self, branch, label):
+        evidence = self.repo_artifact("failure", label)
+        self.record(branch, {
+            "schema_version": 1, "run_id": "RUN-1", "branch_id": branch["branch_id"],
+            "status": "failed", "output_kind": "evidence_manifest",
+            "failure_code": "RESEARCH_FAILURE", "evidence": [evidence],
+        })
+
+    def test_design_routes_gate_tech_lead_on_bounded_research_collection(self):
+        fanout = self._research_started()
+        status = self.graphctl("status", "--run-id", "RUN-1")
+        research = [branch for branch in status["branches"] if branch["stage"] == "research"]
+        self.assertEqual(
+            {(branch["node_key"], branch["role"], branch["generation"], branch["status"], branch["model"], branch["reasoning_effort"]) for branch in research},
+            {
+                ("design_research_architecture", "impact_mapper", 0, "ready", "gpt-5.6-luna", "max"),
+                ("design_research_validation", "impact_mapper", 0, "ready", "gpt-5.6-luna", "max"),
+            },
+        )
+        self.assertFalse(any(branch["node_key"] == "tech_lead" for branch in status["branches"]))
+        first = self.claim_raw()
+        second = self.claim_raw()
+        self.assertEqual(
+            {first["node_key"], second["node_key"]},
+            {"design_research_architecture", "design_research_validation"},
+        )
+        self.success(first)
+        self.success(second)
+        sealed = self.advance("research_collection")
+        self.assertEqual(sealed["outcome"], "RESEARCH_SEALED")
+        status = self.graphctl("status", "--run-id", "RUN-1")
+        self.assertEqual(
+            [(branch["node_key"], branch["generation"], branch["status"]) for branch in status["branches"] if branch["node_key"] == "tech_lead"],
+            [("tech_lead", 0, "ready")],
+        )
+        tech = self.claim_raw()
+        self.assertEqual({item["kind"] for item in tech["inputs"]}, {
+            "branch_result", "collection", "evidence_manifest", "task_brief",
+        })
+        collection = next(item for item in tech["inputs"] if item["kind"] == "collection")
+        self.assertEqual(collection["content"]["join_id"], next(
+            join["join_id"] for join in status["joins"] if join["join_key"] == "research_collection"
+        ))
+
+    def test_retryable_research_failure_requires_retry_before_collection_seal(self):
+        self._research_started()
+        first = self.claim_raw()
+        second = self.claim_raw()
+        self._failed_research(first, "research-retryable-failure")
+        self.success(second)
+        join = self.open_join("research_collection")
+        validation = self.graphctl(
+            "join", "validate", "--run-id", "RUN-1", "--join-id", join["join_id"],
+        )
+        self.assertEqual(validation["code"], "RETRY_REQUIRED")
+        with self.assertRaisesRegex(StateError, "RETRY_REQUIRED"):
+            self.advance("research_collection")
+        self.graphctl(
+            "record", "retry", "--run-id", "RUN-1", "--branch-id", first["branch_id"],
+            "--reason-code", "RETRY", "--op-id", "research-retry-one",
+        )
+        retried = self.claim_raw()
+        self.assertEqual(retried["branch_id"], first["branch_id"])
+        self.success(retried)
+        sealed = self.advance("research_collection")
+        self.assertEqual(sealed["outcome"], "RESEARCH_SEALED")
+        status = self.graphctl("status", "--run-id", "RUN-1")
+        self.assertEqual(
+            [(branch["node_key"], branch["generation"], branch["status"])
+             for branch in status["branches"] if branch["node_key"] == "tech_lead"],
+            [("tech_lead", 0, "ready")],
+        )
+
+    def test_research_result_decisions_and_findings_are_atomic_and_forbidden(self):
+        fanout = self._research_started()
+        branch = self.claim_raw()
+        output = self.repo_artifact("evidence_manifest", "research-output")
+        evidence = self.repo_artifact("finding", "research-evidence")
+        database = self.store.db_path("albanian-live-translate", "RUN-1")
+
+        def invalid(extra):
+            value = {
+                "schema_version": 1, "run_id": "RUN-1", "branch_id": branch["branch_id"],
+                "status": "succeeded", "output_kind": "evidence_manifest",
+                "artifact_ref": output, "evidence": [evidence], "findings": [],
+            }
+            value.update(extra)
+            return value
+
+        for index, (extra, code) in enumerate(((
+            {"decision": "APPROVE"}, "DECISION_FORBIDDEN",
+        ), (
+            {"findings": [{"finding_id": "ARCH-001", "disposition": "approve"}]},
+            "FINDINGS_FORBIDDEN",
+        ))):
+            with self.subTest(code=code):
+                with self.store.connect(database) as connection:
+                    before = connection.execute("SELECT state_revision FROM runs").fetchone()[0]
+                    artifact_count = connection.execute(
+                        "SELECT COUNT(*) FROM artifacts WHERE run_id=?", ("RUN-1",)
+                    ).fetchone()[0]
+                with self.assertRaisesRegex(ContractError, code):
+                    self.record(branch, invalid(extra))
+                with self.store.connect(database) as connection:
+                    current = connection.execute(
+                        "SELECT nodes.status,runs.state_revision,nodes.result_json FROM nodes JOIN runs ON runs.run_id=nodes.run_id WHERE nodes.branch_id=?",
+                        (branch["branch_id"],),
+                    ).fetchone()
+                    self.assertEqual((current["status"], current["state_revision"]), ("running", before))
+                    self.assertIsNone(current["result_json"])
+                    self.assertEqual(
+                        connection.execute("SELECT COUNT(*) FROM artifacts WHERE run_id=?", ("RUN-1",)).fetchone()[0],
+                        artifact_count,
+                    )
+        self.success(branch)
+
+    def test_persisted_research_evidence_is_reverified_before_status(self):
+        self._research_started()
+        branch = self.claim_raw()
+        self.success(branch)
+        database = self.store.db_path("albanian-live-translate", "RUN-1")
+        with self.store.connect(database) as connection:
+            result_row = connection.execute(
+                "SELECT result_json FROM nodes WHERE branch_id=?", (branch["branch_id"],)
+            ).fetchone()
+            result = json.loads(result_row["result_json"])
+            connection.execute(
+                "DELETE FROM artifacts WHERE ref=?", (result["evidence"][0]["ref"],)
+            )
+            connection.commit()
+        with self.assertRaisesRegex(StateError, "TERMINAL_RESULT_INVALID"):
+            self.graphctl("status", "--run-id", "RUN-1")
+
+    def test_exhausted_mandatory_research_blocks_without_creating_tech_lead(self):
+        fanout = self._research_started()
+        first = self.claim_raw()
+        second = self.claim_raw()
+        self._failed_research(first, "research-failure-one")
+        self._failed_research(second, "research-failure-two")
+        self.graphctl(
+            "record", "retry", "--run-id", "RUN-1", "--branch-id", first["branch_id"],
+            "--reason-code", "RETRY", "--op-id", "research-retry-exhausted-one",
+        )
+        first_retry = self.claim_raw()
+        self._failed_research(first_retry, "research-failure-one-exhausted")
+        self.graphctl(
+            "record", "retry", "--run-id", "RUN-1", "--branch-id", second["branch_id"],
+            "--reason-code", "RETRY", "--op-id", "research-retry-exhausted-two",
+        )
+        second_retry = self.claim_raw()
+        self._failed_research(second_retry, "research-failure-two-exhausted")
+        blocked = self.advance("research_collection")
+        self.assertEqual(
+            (blocked["code"], blocked["reason"], self.graphctl("status", "--run-id", "RUN-1")["status"]),
+            ("GRAPH_BLOCKED", "MANDATORY_RESEARCH_FAILED", "blocked"),
+        )
+        self.assertFalse(any(
+            branch["node_key"] == "tech_lead"
+            for branch in self.graphctl("status", "--run-id", "RUN-1")["branches"]
+        ))
 
     def _approve_design_to_implementation(self):
         self._record_design_review("APPROVE")
@@ -232,9 +406,22 @@ class CliGoldenTraceTests(GraphCase):
         result = self.advance("design_consolidation")
         status = self.graphctl("status", "--run-id", "RUN-1")
         self.assertEqual(result["outcome"], "REVISE")
-        self.assertEqual(status["next_action"]["kind"], "claim")
-        ready = [b for b in status["branches"] if b["status"] == "ready"]
-        self.assertEqual([(b["node_key"], b["generation"]) for b in ready], [("tech_lead", 1)])
+        self.assertEqual(status["next_action"]["kind"], "record_fanout_assessment")
+        research = [b for b in status["branches"] if b["stage"] == "research"]
+        by_generation = {
+            generation: [b for b in research if b["generation"] == generation]
+            for generation in {b["generation"] for b in research}
+        }
+        self.assertEqual(set(by_generation), {0, 1})
+        self.assertEqual({(b["node_key"], b["status"]) for b in by_generation[0]}, {
+            ("design_research_architecture", "succeeded"),
+            ("design_research_validation", "succeeded"),
+        })
+        self.assertEqual({(b["node_key"], b["generation"], b["status"]) for b in by_generation[1]}, {
+            ("design_research_architecture", 1, "pending"),
+            ("design_research_validation", 1, "pending"),
+        })
+        self.assertFalse(any(b["node_key"] == "tech_lead" and b["generation"] == 1 for b in status["branches"]))
         self.assertEqual(next(b for b in status["budgets"] if b["budget_id"] == "design_revisions")["used"], 1)
 
     def test_golden_repair_activates_fresh_implementation_generation(self):
@@ -257,8 +444,22 @@ class CliGoldenTraceTests(GraphCase):
         self.consolidation("delivery", "REDESIGN", dispositions=[{"finding_id": "TEST-001", "disposition": "redesign"}])
         self.advance("delivery_consolidation")
         status = self.graphctl("status", "--run-id", "RUN-1")
-        ready = [b for b in status["branches"] if b["status"] == "ready"]
-        self.assertEqual([(b["node_key"], b["generation"]) for b in ready], [("tech_lead", 1)])
+        self.assertEqual(status["next_action"]["kind"], "record_fanout_assessment")
+        research = [b for b in status["branches"] if b["stage"] == "research"]
+        by_generation = {
+            generation: [b for b in research if b["generation"] == generation]
+            for generation in {b["generation"] for b in research}
+        }
+        self.assertEqual(set(by_generation), {0, 1})
+        self.assertEqual({(b["node_key"], b["status"]) for b in by_generation[0]}, {
+            ("design_research_architecture", "succeeded"),
+            ("design_research_validation", "succeeded"),
+        })
+        self.assertEqual({(b["node_key"], b["generation"], b["status"]) for b in by_generation[1]}, {
+            ("design_research_architecture", 1, "pending"),
+            ("design_research_validation", 1, "pending"),
+        })
+        self.assertFalse(any(b["node_key"] == "tech_lead" and b["generation"] == 1 for b in status["branches"]))
         self.assertEqual(next(b for b in status["budgets"] if b["budget_id"] == "design_revisions")["used"], 1)
 
     def test_resume_preserves_running_work_and_rejects_changed_policy(self):

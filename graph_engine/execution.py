@@ -11,26 +11,26 @@ TSHIRT_SIZES = ("small", "medium", "large")
 # select a size-specific assignment, but it may not invent a model or effort.
 SIZE_ASSIGNMENTS: Dict[str, Dict[str, Tuple[str, str]]] = {
     "small": {
-        "impact_mapper": ("gpt-5.6-luna", "high"),
-        "advisory_reviewer": ("gpt-5.6-luna", "low"),
-        "tech_lead": ("gpt-5.6-luna", "medium"),
-        "architect": ("gpt-5.6-luna", "high"),
-        "senior_engineer": ("gpt-5.6-luna", "medium"),
-        "code_reviewer": ("gpt-5.6-luna", "high"),
-        "test_engineer": ("gpt-5.6-luna", "high"),
-        "audio_realtime_specialist": ("gpt-5.6-luna", "high"),
-        "ios_platform_specialist": ("gpt-5.6-luna", "high"),
-        "release_operations_reviewer": ("gpt-5.6-sol", "high"),
+        "impact_mapper": ("gpt-5.6-luna", "max"),
+        "advisory_reviewer": ("gpt-5.6-luna", "max"),
+        "tech_lead": ("gpt-5.6-sol", "medium"),
+        "architect": ("gpt-5.6-sol", "medium"),
+        "senior_engineer": ("gpt-5.6-luna", "max"),
+        "code_reviewer": ("gpt-5.6-luna", "max"),
+        "test_engineer": ("gpt-5.6-luna", "max"),
+        "audio_realtime_specialist": ("gpt-5.6-luna", "max"),
+        "ios_platform_specialist": ("gpt-5.6-luna", "max"),
+        "release_operations_reviewer": ("gpt-5.6-sol", "medium"),
         "security_reviewer": ("gpt-5.6-sol", "high"),
         "supervisor": ("primary-thread", "inherited"),
     },
     "medium": {
-        "impact_mapper": ("gpt-5.6-luna", "high"),
-        "advisory_reviewer": ("gpt-5.6-sol", "xhigh"),
-        "tech_lead": ("gpt-5.6-sol", "high"),
-        "architect": ("gpt-5.6-sol", "xhigh"),
-        "senior_engineer": ("gpt-5.6-sol", "high"),
-        "code_reviewer": ("gpt-5.6-sol", "xhigh"),
+        "impact_mapper": ("gpt-5.6-luna", "max"),
+        "advisory_reviewer": ("gpt-5.6-sol", "medium"),
+        "tech_lead": ("gpt-5.6-sol", "medium"),
+        "architect": ("gpt-5.6-sol", "high"),
+        "senior_engineer": ("gpt-5.6-sol", "medium"),
+        "code_reviewer": ("gpt-5.6-sol", "high"),
         "test_engineer": ("gpt-5.6-luna", "max"),
         "audio_realtime_specialist": ("gpt-5.6-sol", "high"),
         "ios_platform_specialist": ("gpt-5.6-sol", "high"),
@@ -39,16 +39,16 @@ SIZE_ASSIGNMENTS: Dict[str, Dict[str, Tuple[str, str]]] = {
         "supervisor": ("primary-thread", "inherited"),
     },
     "large": {
-        "impact_mapper": ("gpt-5.6-luna", "high"),
-        "advisory_reviewer": ("gpt-5.6-sol", "xhigh"),
-        "tech_lead": ("gpt-5.6-sol", "xhigh"),
-        "architect": ("gpt-5.6-sol", "max"),
-        "senior_engineer": ("gpt-5.6-sol", "xhigh"),
-        "code_reviewer": ("gpt-5.6-sol", "max"),
-        "test_engineer": ("gpt-5.6-sol", "xhigh"),
-        "audio_realtime_specialist": ("gpt-5.6-sol", "xhigh"),
-        "ios_platform_specialist": ("gpt-5.6-sol", "xhigh"),
-        "release_operations_reviewer": ("gpt-5.6-sol", "xhigh"),
+        "impact_mapper": ("gpt-5.6-luna", "max"),
+        "advisory_reviewer": ("gpt-5.6-sol", "high"),
+        "tech_lead": ("gpt-5.6-sol", "high"),
+        "architect": ("gpt-5.6-sol", "xhigh"),
+        "senior_engineer": ("gpt-5.6-sol", "high"),
+        "code_reviewer": ("gpt-5.6-sol", "xhigh"),
+        "test_engineer": ("gpt-5.6-sol", "high"),
+        "audio_realtime_specialist": ("gpt-5.6-sol", "high"),
+        "ios_platform_specialist": ("gpt-5.6-sol", "high"),
+        "release_operations_reviewer": ("gpt-5.6-sol", "high"),
         "security_reviewer": ("gpt-5.6-sol", "xhigh"),
         "supervisor": ("primary-thread", "inherited"),
     },
@@ -56,6 +56,8 @@ SIZE_ASSIGNMENTS: Dict[str, Dict[str, Tuple[str, str]]] = {
 
 NODE_ROLES = {
     "impact_mapper": "impact_mapper",
+    "design_research_architecture": "impact_mapper",
+    "design_research_validation": "impact_mapper",
     "advisory_reviewer": "code_reviewer",
     "tech_lead": "tech_lead",
     "architect": "software_architect",
@@ -72,6 +74,8 @@ NODE_ROLES = {
 
 DISPATCH_WHEN = {
     "impact_mapper": "always, before route selection",
+    "design_research_architecture": "design route, before each Tech Lead generation",
+    "design_research_validation": "design route, before each Tech Lead generation",
     "advisory_reviewer": "advisory route",
     "tech_lead": "design_only or full_delivery route",
     "architect": "design_only or full_delivery route",
@@ -85,6 +89,20 @@ DISPATCH_WHEN = {
     "supervisor_design_consolidation": "design consolidation",
     "supervisor_delivery_consolidation": "delivery consolidation",
 }
+
+
+def validate_model_assignment(node_key: str, model: str, reasoning_effort: str) -> None:
+    """Fail closed on the graph's model and reasoning-effort invariants."""
+    if model not in {"gpt-5.6-luna", "gpt-5.6-sol", "primary-thread"}:
+        raise ValueError("MODEL_ASSIGNMENT_INVALID")
+    if model == "primary-thread" and reasoning_effort != "inherited":
+        raise ValueError("SUPERVISOR_EFFORT_INVALID")
+    if model == "gpt-5.6-luna" and reasoning_effort != "max":
+        raise ValueError("LUNA_REASONING_EFFORT_REQUIRED")
+    if node_key in {"tech_lead", "architect"} and model != "gpt-5.6-sol":
+        raise ValueError("DESIGN_MODEL_REQUIRED")
+    if NODE_ROLES.get(node_key) == "impact_mapper" and model != "gpt-5.6-luna":
+        raise ValueError("IMPACT_MAPPER_ASSIGNMENT_REQUIRED")
 
 
 def recommend_size(task: Mapping[str, Any]) -> Tuple[str, str]:
@@ -105,7 +123,9 @@ def build_execution_plan(
     assignments = []
     for node_key in sorted(NODE_ROLES):
         role = NODE_ROLES[node_key]
-        model, effort = SIZE_ASSIGNMENTS[size][role if role in SIZE_ASSIGNMENTS[size] else node_key]
+        assignment_key = node_key if node_key in SIZE_ASSIGNMENTS[size] else role
+        model, effort = SIZE_ASSIGNMENTS[size][assignment_key]
+        validate_model_assignment(node_key, model, effort)
         assignments.append({
             "node_key": node_key,
             "role": role,
@@ -134,6 +154,9 @@ def build_execution_plan(
 def assignment_for(plan: Mapping[str, Any], node_key: str) -> Mapping[str, str]:
     for assignment in plan["assignments"]:
         if assignment["node_key"] == node_key:
+            validate_model_assignment(
+                node_key, assignment["model"], assignment["reasoning_effort"]
+            )
             return assignment
     raise ValueError("missing execution assignment")
 

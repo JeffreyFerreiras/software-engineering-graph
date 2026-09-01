@@ -1,6 +1,7 @@
 import copy
 import os
 import json
+import re
 from pathlib import Path
 
 from graph_engine.config import (
@@ -11,6 +12,79 @@ from graph_engine.contracts import ContractError, validate_impact_map, validate_
 from graph_engine.ids import sha256_bytes
 
 from tests.test_support import GraphCase
+
+
+def _validate_json_schema(value, schema, root, path="$", seen_refs=None):
+    """Validate the repository fixture's schema subset with the standard library only."""
+    seen_refs = set() if seen_refs is None else seen_refs
+    if "$ref" in schema:
+        ref = schema["$ref"]
+        if not ref.startswith("#/"):
+            raise AssertionError("unsupported schema reference at " + path)
+        target = root
+        for part in ref[2:].split("/"):
+            target = target[part]
+        marker = (ref, path)
+        if marker in seen_refs:
+            raise AssertionError("recursive schema reference at " + path)
+        return _validate_json_schema(value, target, root, path, seen_refs | {marker})
+
+    if "const" in schema and value != schema["const"]:
+        raise AssertionError("{}: expected {!r}, got {!r}".format(path, schema["const"], value))
+    if "enum" in schema and value not in schema["enum"]:
+        raise AssertionError("{}: value is outside enum".format(path))
+
+    expected_type = schema.get("type")
+    if expected_type is not None:
+        type_matches = {
+            "object": lambda item: isinstance(item, dict),
+            "array": lambda item: isinstance(item, list),
+            "string": lambda item: isinstance(item, str),
+            "integer": lambda item: isinstance(item, int) and not isinstance(item, bool),
+            "boolean": lambda item: isinstance(item, bool),
+        }
+        if expected_type not in type_matches or not type_matches[expected_type](value):
+            raise AssertionError("{}: expected {}".format(path, expected_type))
+
+    if isinstance(value, dict):
+        required = schema.get("required", [])
+        missing = [key for key in required if key not in value]
+        if missing:
+            raise AssertionError("{}: missing {}".format(path, ",".join(missing)))
+        properties = schema.get("properties", {})
+        if schema.get("additionalProperties") is False:
+            unknown = set(value) - set(properties)
+            if unknown:
+                raise AssertionError("{}: unknown {}".format(path, ",".join(sorted(unknown))))
+        elif isinstance(schema.get("additionalProperties"), dict):
+            additional_schema = schema["additionalProperties"]
+            for key in sorted(set(value) - set(properties)):
+                _validate_json_schema(
+                    value[key], additional_schema, root, path + "." + key, seen_refs
+                )
+        for key, child_schema in properties.items():
+            if key in value:
+                _validate_json_schema(value[key], child_schema, root, path + "." + key, seen_refs)
+        if len(value) < schema.get("minProperties", 0):
+            raise AssertionError("{}: too few properties".format(path))
+    elif isinstance(value, list):
+        if len(value) < schema.get("minItems", 0) or len(value) > schema.get("maxItems", len(value)):
+            raise AssertionError("{}: invalid item count".format(path))
+        if schema.get("uniqueItems"):
+            encoded = [json.dumps(item, sort_keys=True, separators=(",", ":")) for item in value]
+            if len(encoded) != len(set(encoded)):
+                raise AssertionError("{}: duplicate items".format(path))
+        if "items" in schema:
+            for index, item in enumerate(value):
+                _validate_json_schema(item, schema["items"], root, "{}[{}]".format(path, index), seen_refs)
+    elif isinstance(value, str):
+        if len(value) < schema.get("minLength", 0) or len(value) > schema.get("maxLength", len(value)):
+            raise AssertionError("{}: invalid string length".format(path))
+        if "pattern" in schema and re.search(schema["pattern"], value) is None:
+            raise AssertionError("{}: pattern mismatch".format(path))
+    elif isinstance(value, int) and not isinstance(value, bool):
+        if value < schema.get("minimum", value) or value > schema.get("maximum", value):
+            raise AssertionError("{}: number outside bounds".format(path))
 
 
 class ContractTests(GraphCase):
@@ -94,6 +168,19 @@ class ContractTests(GraphCase):
     def test_repository_policy_reaches_required_roles_and_checks(self):
         roles = {item["role"] for item in self.policy["node_templates"].values()}
         self.assertTrue({"impact_mapper", "tech_lead", "software_architect", "senior_engineer", "code_reviewer", "test_engineer", "supervisor"}.issubset(roles))
+        for node_key in ("design_research_architecture", "design_research_validation"):
+            template = self.policy["node_templates"][node_key]
+            self.assertEqual(
+                (template["role"], template["stages"], template["max_retries"]),
+                ("impact_mapper", ["research"], 1),
+            )
+            self.assertEqual(
+                {key: template["output_contract"][key] for key in (
+                    "artifact_required", "evidence_required", "decision_forbidden", "findings_forbidden",
+                )},
+                {"artifact_required": True, "evidence_required": True,
+                 "decision_forbidden": True, "findings_forbidden": True},
+            )
         self.assertEqual(self.policy["required_checks"]["repo-check"]["command_id"], "npm-run-check")
         self.assertEqual(set(self.policy["specialists"]), {"audio_realtime_translation", "ios_webkit_native", "release_operations", "security_privacy"})
         schema = json.loads((Path(__file__).parents[1] / "references" / "repository-config.schema.json").read_text(encoding="utf-8"))
@@ -109,6 +196,34 @@ class ContractTests(GraphCase):
             ENGINE_COLLECTION_MAX_BYTES,
             maximum_reviewers * ENGINE_ARTIFACT_MAX["branch_result"] + 64 * 1024,
         )
+
+    def test_repository_fixture_matches_published_schema(self):
+        schema_path = Path(__file__).parents[1] / "references" / "repository-config.schema.json"
+        fixture_path = Path(__file__).parent / "fixtures" / "engineering-graph.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+        _validate_json_schema(fixture, schema, schema)
+
+    def test_repository_fixture_rejects_schema_missing_research_flags(self):
+        schema_path = Path(__file__).parents[1] / "references" / "repository-config.schema.json"
+        fixture_path = Path(__file__).parent / "fixtures" / "engineering-graph.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+        for field in ("evidence_required", "decision_forbidden", "findings_forbidden"):
+            with self.subTest(field=field):
+                mutated = copy.deepcopy(schema)
+                del mutated["$defs"]["outputContract"]["properties"][field]
+                with self.assertRaisesRegex(AssertionError, "unknown"):
+                    _validate_json_schema(fixture, mutated, mutated)
+
+    def test_policy_missing_research_template_fails_closed(self):
+        policy = copy.deepcopy(self.policy)
+        del policy["node_templates"]["design_research_validation"]
+        (self.repo / ".codex" / "engineering-graph.json").write_text(
+            json.dumps(policy), encoding="utf-8"
+        )
+        with self.assertRaisesRegex(ContractError, "ENGINE_TOPOLOGY_CHANGED"):
+            load_policy(self.repo)
 
     def test_policy_topology_roots_contracts_and_targets_are_engine_bounded(self):
         mutations = [

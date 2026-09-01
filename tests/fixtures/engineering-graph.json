@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "repository_id": "albanian-live-translate",
+  "compatible_engine": {"min": "2.0.0", "max_exclusive": "3.0.0"},
+  "artifact_roots": {"repo": ["docs/"], "profile": ["references/"]},
+  "artifact_kinds": {
+    "advisory_report": {"extensions": [".json", ".md"], "max_bytes": 262144},
+    "acceptance_evidence": {"extensions": [".json", ".md", ".txt"], "max_bytes": 262144},
+    "check_evidence": {"extensions": [".json", ".md", ".txt"], "max_bytes": 262144},
+    "collection": {"extensions": [".json"], "max_bytes": 2097152},
+    "delivery_consolidation": {"extensions": [".json"], "max_bytes": 262144},
+    "delivery_review": {"extensions": [".json", ".md"], "max_bytes": 262144},
+    "design_consolidation": {"extensions": [".json"], "max_bytes": 262144},
+    "design_review": {"extensions": [".json", ".md"], "max_bytes": 262144},
+    "evidence_manifest": {"extensions": [".json"], "max_bytes": 131072},
+    "finding": {"extensions": [".json", ".md", ".txt"], "max_bytes": 262144},
+    "failure": {"extensions": [".json", ".md", ".txt"], "max_bytes": 262144},
+    "timeout": {"extensions": [".json", ".md", ".txt"], "max_bytes": 131072},
+    "skip": {"extensions": [".json", ".md", ".txt"], "max_bytes": 131072},
+    "block": {"extensions": [".json", ".md", ".txt"], "max_bytes": 131072},
+    "branch_result": {"extensions": [".json"], "max_bytes": 262144},
+    "impact_map": {"extensions": [".json"], "max_bytes": 262144},
+    "implementation_handoff": {"extensions": [".json", ".md"], "max_bytes": 262144},
+    "specialist_review": {"extensions": [".json", ".md"], "max_bytes": 262144},
+    "task_brief": {"extensions": [".json"], "max_bytes": 131072},
+    "technical_design": {"extensions": [".json", ".md"], "max_bytes": 4194304}
+  },
+  "impact_tags": [
+    "audio_realtime_translation", "cross_layer", "dependency", "ios_webkit_native",
+    "persistence", "production_behavior", "release_operations", "security_privacy"
+  ],
+  "routes": {
+    "advisory": {"entry_node": "advisory_reviewer", "design_gates": false, "delivery_gates": false, "closure": "closure"},
+    "design_only": {"entry_node": "tech_lead", "design_gates": true, "delivery_gates": false, "closure": "closure"},
+    "fast_path": {"entry_node": "senior_engineer", "design_gates": false, "delivery_gates": true, "closure": "closure"},
+    "full_delivery": {"entry_node": "tech_lead", "design_gates": true, "delivery_gates": true, "closure": "closure"}
+  },
+  "node_templates": {
+    "impact_mapper": {"role": "impact_mapper", "stages": ["bootstrap"], "mandatory": true, "max_retries": 1, "output_contract": {"artifact_kind": "impact_map", "schema_version": 1, "artifact_required": false}},
+    "design_research_architecture": {"role": "impact_mapper", "stages": ["research"], "mandatory": true, "max_retries": 1, "output_contract": {"artifact_kind": "evidence_manifest", "schema_version": 1, "artifact_required": true, "evidence_required": true, "decision_forbidden": true, "findings_forbidden": true}},
+    "design_research_validation": {"role": "impact_mapper", "stages": ["research"], "mandatory": true, "max_retries": 1, "output_contract": {"artifact_kind": "evidence_manifest", "schema_version": 1, "artifact_required": true, "evidence_required": true, "decision_forbidden": true, "findings_forbidden": true}},
+    "advisory_reviewer": {"role": "code_reviewer", "stages": ["advisory"], "mandatory": true, "max_retries": 1, "output_contract": {"artifact_kind": "advisory_report", "schema_version": 1, "artifact_required": true}},
+    "tech_lead": {"role": "tech_lead", "stages": ["design"], "mandatory": true, "max_retries": 1, "output_contract": {"artifact_kind": "technical_design", "schema_version": 1, "artifact_required": true}},
+    "architect": {"role": "software_architect", "stages": ["design"], "mandatory": true, "max_retries": 1, "output_contract": {"artifact_kind": "design_review", "schema_version": 1, "artifact_required": true, "decision_values": ["APPROVE", "REVISE", "BLOCK"]}},
+    "senior_engineer": {"role": "senior_engineer", "stages": ["implementation"], "mandatory": true, "max_retries": 1, "output_contract": {"artifact_kind": "implementation_handoff", "schema_version": 1, "artifact_required": false, "decision_values": ["IMPLEMENTED", "REDESIGN_REQUIRED"], "artifact_required_for_decisions": ["IMPLEMENTED"], "evidence_required_for_decisions": ["REDESIGN_REQUIRED"]}},
+    "code_reviewer": {"role": "code_reviewer", "stages": ["delivery"], "mandatory": true, "max_retries": 1, "output_contract": {"artifact_kind": "delivery_review", "schema_version": 1, "artifact_required": true, "decision_values": ["APPROVE", "REVISE", "BLOCK"]}},
+    "test_engineer": {"role": "test_engineer", "stages": ["delivery"], "mandatory": true, "max_retries": 1, "output_contract": {"artifact_kind": "delivery_review", "schema_version": 1, "artifact_required": true, "decision_values": ["APPROVE", "REVISE", "BLOCK"]}},
+    "audio_realtime_specialist": {"role": "audio_realtime_specialist", "stages": ["design", "delivery"], "mandatory": true, "max_retries": 1, "output_contract": {"artifact_kind": "specialist_review", "schema_version": 1, "artifact_required": true, "decision_values": ["APPROVE", "REVISE", "BLOCK"]}},
+    "ios_platform_specialist": {"role": "ios_platform_specialist", "stages": ["design", "delivery"], "mandatory": true, "max_retries": 1, "output_contract": {"artifact_kind": "specialist_review", "schema_version": 1, "artifact_required": true, "decision_values": ["APPROVE", "REVISE", "BLOCK"]}},
+    "release_operations_reviewer": {"role": "release_operations_reviewer", "stages": ["design", "delivery"], "mandatory": true, "max_retries": 1, "output_contract": {"artifact_kind": "specialist_review", "schema_version": 1, "artifact_required": true, "decision_values": ["APPROVE", "REVISE", "BLOCK"]}},
+    "security_reviewer": {"role": "security_reviewer", "stages": ["design", "delivery"], "mandatory": true, "max_retries": 1, "output_contract": {"artifact_kind": "specialist_review", "schema_version": 1, "artifact_required": true, "decision_values": ["APPROVE", "REVISE", "BLOCK"]}},
+    "supervisor_design_consolidation": {"role": "supervisor", "stages": ["design"], "mandatory": true, "max_retries": 0, "output_contract": {"artifact_kind": "design_consolidation", "schema_version": 1, "artifact_required": false}},
+    "supervisor_delivery_consolidation": {"role": "supervisor", "stages": ["delivery"], "mandatory": true, "max_retries": 0, "output_contract": {"artifact_kind": "delivery_consolidation", "schema_version": 1, "artifact_required": false}}
+  },
+  "specialists": {
+    "audio_realtime_translation": {"node_key": "audio_realtime_specialist", "role": "audio_realtime_specialist", "stages": ["design", "delivery"], "mandatory": true},
+    "ios_webkit_native": {"node_key": "ios_platform_specialist", "role": "ios_platform_specialist", "stages": ["design", "delivery"], "mandatory": true},
+    "release_operations": {"node_key": "release_operations_reviewer", "role": "release_operations_reviewer", "stages": ["design", "delivery"], "mandatory": true},
+    "security_privacy": {"node_key": "security_reviewer", "role": "security_reviewer", "stages": ["design", "delivery"], "mandatory": true}
+  },
+  "limits": {"design_revisions": 3, "delivery_repairs": 3, "inspection": {"file_reads": 12, "discovery_commands": 8}, "manifest_bytes": 262144, "artifact_bytes": 4194304},
+  "required_checks": {"repo-check": {"command_id": "npm-run-check", "mandatory": true, "argv": ["npm", "run", "check"], "timeout_seconds": 900}},
+  "role_capabilities": {
+    "impact_mapper": [
+      {"effect": "filesystem_read", "action": "read", "target_ref": "repo:docs/"},
+      {"effect": "external_read", "action": "inspect", "target_ref": "andromeda"}
+    ],
+    "tech_lead": [{"effect": "filesystem_read", "action": "read", "target_ref": "repo:docs/"}, {"effect": "filesystem_read", "action": "read", "target_ref": "repo:src/"}, {"effect": "filesystem_write", "action": "edit", "target_ref": "repo:docs/technical-designs/"}],
+    "software_architect": [{"effect": "filesystem_read", "action": "read", "target_ref": "repo:docs/"}, {"effect": "filesystem_read", "action": "read", "target_ref": "repo:src/"}],
+    "senior_engineer": [{"effect": "filesystem_read", "action": "read", "target_ref": "repo:docs/"}, {"effect": "filesystem_read", "action": "read", "target_ref": "repo:src/"}, {"effect": "filesystem_write", "action": "edit", "target_ref": "repo:docs/"}, {"effect": "filesystem_write", "action": "edit", "target_ref": "repo:scripts/"}, {"effect": "filesystem_write", "action": "edit", "target_ref": "repo:src/"}, {"effect": "command", "action": "run", "target_ref": "npm-run-check"}],
+    "code_reviewer": [{"effect": "filesystem_read", "action": "read", "target_ref": "repo:docs/"}, {"effect": "filesystem_read", "action": "read", "target_ref": "repo:src/"}, {"effect": "command", "action": "run", "target_ref": "npm-run-check"}],
+    "test_engineer": [{"effect": "filesystem_read", "action": "read", "target_ref": "repo:docs/"}, {"effect": "filesystem_read", "action": "read", "target_ref": "repo:src/"}, {"effect": "command", "action": "run", "target_ref": "npm-run-check"}],
+    "audio_realtime_specialist": [{"effect": "filesystem_read", "action": "read", "target_ref": "repo:docs/"}, {"effect": "filesystem_read", "action": "read", "target_ref": "repo:src/"}],
+    "ios_platform_specialist": [{"effect": "filesystem_read", "action": "read", "target_ref": "repo:docs/"}, {"effect": "filesystem_read", "action": "read", "target_ref": "repo:src/"}],
+    "release_operations_reviewer": [{"effect": "filesystem_read", "action": "read", "target_ref": "repo:docs/"}, {"effect": "external_read", "action": "inspect", "target_ref": "andromeda"}],
+    "security_reviewer": [{"effect": "filesystem_read", "action": "read", "target_ref": "repo:docs/"}, {"effect": "filesystem_read", "action": "read", "target_ref": "repo:src/"}],
+    "supervisor": [{"effect": "filesystem_read", "action": "read", "target_ref": "repo:docs/"}]
+  },
+  "denied_patterns": ["**/.env", "**/.env.*", "**/.git/**", "**/.hg/**", "**/.ssh/**", "**/.svn/**", "**/*credential*", "**/*secret*", "**/*.key", "**/*.p12", "**/*.pem", "**/*.pfx", "**/graph-inbox/**", "**/graph-runs/**", "**/id_ed25519", "**/id_rsa"]
+}
