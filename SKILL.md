@@ -40,6 +40,13 @@ human explicitly approves that immutable execution plan.
 
    Cover every listed member and all four resource categories. Order every exclusive conflict and any
    service usage needed to keep each unordered set within capacity. The assessment is immutable.
+   For `design_only` and `full_delivery`, the Impact Mapper result creates the fixed assessed-pending
+   `design_research_architecture` and `design_research_validation` fan-out before any Tech Lead is
+   created. Both branches reuse the Impact Mapper role at Luna `max`, receive deterministic
+   architecture/validation focus and split inspection budgets, and may project only filesystem or
+   external read capabilities. They must return a verified `evidence_manifest` with evidence, no
+   decision, and no findings. Sealing `research_collection` materializes the canonical evidence and
+   creates the same-generation Tech Lead. A failed exhausted mandatory research pair blocks the run.
 6. Put each returned branch manifest in the derived run inbox shown by `init` or `status`, then use
    `record branch-result` with the claimed `attempt_id` and `claim_token`. Branch manifests never
    contain control mutations.
@@ -171,6 +178,8 @@ Then apply these route rules:
 
 - For an answer, diagnosis, or review request, use only relevant read-only roles and do not implement.
 - For a design-only request, complete the design loop and stop after presenting the approved plan.
+- Every initial design route, design `REVISE`, and delivery `REDESIGN` creates the same-generation
+  research pair before its next Tech Lead. Advisory and initial fast-path routes remain direct.
 - For a non-trivial implementation request, run the full graph.
 - For a high-risk change, add the required security, domain, platform, data, or release specialists at the design and verification gates.
 - Use a fast path only for documentation or clearly mechanical changes that cannot affect production behavior, dependencies, data, security, operations, or user experience.
@@ -285,6 +294,8 @@ Have the Supervisor deliver the result, validation evidence, remaining risks, an
   context.
 - Serialize all worktree writes. Never assign the same files or responsibility to concurrent writers.
 - Give every node bounded inputs, permitted actions, expected output, and a stopping condition.
+- Research nodes are deliberately evidence-only. The Supervisor owns artifact materialization and
+  collection sealing; research branches never receive write, test, decision, or findings authority.
 - Give exploratory nodes a file and command budget. Prefer a useful partial packet over an unbounded repository survey.
 - Prefer repository evidence over assumptions. Cite files, lines, commands, logs, or test output in findings.
 - Keep raw logs and noisy exploration in subagent threads. Return concise evidence packets to the Supervisor.
@@ -295,6 +306,8 @@ Have the Supervisor deliver the result, validation evidence, remaining risks, an
 Require these minimum handoffs:
 
 - **Task brief:** objective, scope, non-goals, constraints, acceptance criteria, risk, authority, named evidence paths, inspection budget.
+- **Research result:** a verified `evidence_manifest` artifact and evidence references, with
+  `decision: null` and `findings: []`.
 - **Technical design:** current state, proposal, interfaces, failure modes, rollout, rollback, observability, test strategy, alternatives.
 - **Design review:** decision, finding IDs, evidence, required revisions, unresolved decisions.
 - **Implementation handoff:** changed files, acceptance mapping, focused checks, deviations, risks, skill usage.

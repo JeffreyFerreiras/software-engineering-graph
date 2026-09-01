@@ -19,6 +19,8 @@ ENGINE_ROUTES = {
 
 ENGINE_NODE_SPECS = {
     "impact_mapper": ("impact_mapper", {"bootstrap"}, "impact_map", False, (), 1),
+    "design_research_architecture": ("impact_mapper", {"research"}, "evidence_manifest", True, (), 1),
+    "design_research_validation": ("impact_mapper", {"research"}, "evidence_manifest", True, (), 1),
     "advisory_reviewer": ("code_reviewer", {"advisory"}, "advisory_report", True, (), 1),
     "tech_lead": ("tech_lead", {"design"}, "technical_design", True, (), 1),
     "architect": ("software_architect", {"design"}, "design_review", True, ("APPROVE", "REVISE", "BLOCK"), 1),
@@ -33,8 +35,16 @@ ENGINE_NODE_SPECS = {
     "supervisor_delivery_consolidation": ("supervisor", {"delivery"}, "delivery_consolidation", False, (), 0),
 }
 
+ENGINE_RESEARCH_NODES = {
+    "design_research_architecture": "architecture",
+    "design_research_validation": "validation",
+}
+
 ENGINE_ROLE_CAPABILITIES = {
-    "impact_mapper": {("filesystem_read", "read", "repo:docs/")},
+    "impact_mapper": {
+        ("filesystem_read", "read", "repo:docs/"),
+        ("external_read", "inspect", "andromeda"),
+    },
     "tech_lead": {
         ("filesystem_read", "read", "repo:docs/"),
         ("filesystem_read", "read", "repo:src/"),
@@ -157,6 +167,8 @@ def _validate_output_contract(node_key: str, value: Mapping[str, Any]) -> None:
         allowed.add("decision_values")
     if node_key == "senior_engineer":
         allowed.update({"artifact_required_for_decisions", "evidence_required_for_decisions"})
+    if node_key in ENGINE_RESEARCH_NODES:
+        allowed.update({"evidence_required", "decision_forbidden", "findings_forbidden"})
     require_keys(value, allowed, allowed, f"node_templates.{node_key}.output_contract")
     expected = {"artifact_kind": kind, "schema_version": 1, "artifact_required": artifact_required}
     if decisions:
@@ -164,6 +176,12 @@ def _validate_output_contract(node_key: str, value: Mapping[str, Any]) -> None:
     if node_key == "senior_engineer":
         expected["artifact_required_for_decisions"] = ["IMPLEMENTED"]
         expected["evidence_required_for_decisions"] = ["REDESIGN_REQUIRED"]
+    if node_key in ENGINE_RESEARCH_NODES:
+        expected.update({
+            "evidence_required": True,
+            "decision_forbidden": True,
+            "findings_forbidden": True,
+        })
     if dict(value) != expected:
         raise ContractError(f"node_templates.{node_key}.output_contract", "ENGINE_CONTRACT_CHANGED")
 

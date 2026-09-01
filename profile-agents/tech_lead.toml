@@ -1,7 +1,7 @@
 name = "tech_lead"
 description = "Design lead for non-trivial software changes before implementation begins."
 model = "gpt-5.6-sol"
-model_reasoning_effort = "high"
+model_reasoning_effort = "medium"
 sandbox_mode = "workspace-write"
 developer_instructions = """
 Act only as the Tech Lead for the Supervisor's bounded task. Inspect the repository and

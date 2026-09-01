@@ -18,6 +18,9 @@ request, proposes an execution plan, asks the human to approve that plan, and th
 the roles the work needs:
 
 - **Impact Mapper** classifies the change and selects the minimum safe route.
+- **Architecture and Validation Researchers** perform a fixed, bounded two-member evidence
+  fan-out before every Tech Lead design generation. They use the Impact Mapper role, return only
+  verified evidence manifests, and have no write, test, decision, or findings authority.
 - **Tech Lead** designs the change and plans its implementation.
 - **Software Architect** independently reviews the design.
 - **Senior Engineer** is the sole implementation writer.
@@ -34,7 +37,9 @@ review, records evidence, and returns unresolved product or risk decisions to th
 1. The Supervisor turns the request into a scoped task brief with acceptance criteria and non-goals.
 2. The skill sizes the work and proposes exact AI model and reasoning-effort assignments.
 3. The human approves the plan before any specialist agent starts.
-4. The selected agents design, implement, review, and test through bounded handoffs.
+4. Design routes first run the assessed architecture/validation research fan-out. The Supervisor
+   seals its evidence collection before creating the same-generation Tech Lead branch, then the
+   selected agents continue through bounded design, implementation, review, and test handoffs.
 5. The Supervisor closes the run only when the approved criteria and required checks have evidence.
 
 A local control ledger tracks assignments, approvals, retries, active-work ownership, and recovery
@@ -71,6 +76,9 @@ consumer repository, an installed profile, or any remote system without separate
 - Python standard library only
 - Local operation only, with no CI or remote automation added by this repository
 - State schema 5; older schema 2, 3, and 4 runs fail closed and must be restarted
+- Every Luna assignment uses `max` reasoning effort. Tech Lead and Architect assignments use
+  `gpt-5.6-sol` at every size. Research output contracts require an `evidence_manifest`, verified
+  evidence, a null decision, and empty findings.
 
 On Windows, the ledger requires `--ack-degraded-permissions` because Python cannot prove exclusive
 profile permissions. `--ack-degraded-durability` is only for environments where directory syncing is

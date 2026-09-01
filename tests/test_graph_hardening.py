@@ -46,7 +46,27 @@ class GraphHardeningTests(GraphCase):
         self._record_mapper(self.claim(), tags=selected)
         self.success(self.claim())
         self.advance("design_inputs")
-        return self.graphctl("status", "--run-id", "RUN-1")["fanouts"][0]
+        return next(
+            fanout for fanout in self.graphctl("status", "--run-id", "RUN-1")["fanouts"]
+            if fanout["stage"] == "design"
+        )
+
+    def _sealed_research(self):
+        self.initialize()
+        mapper = self.claim_raw()
+        self._record_mapper(mapper)
+        research = next(
+            fanout for fanout in self.graphctl("status", "--run-id", "RUN-1")["fanouts"]
+            if fanout["stage"] == "research"
+        )
+        self.assess_fanout(research["fanout_id"])
+        self.success(self.claim_raw())
+        self.success(self.claim_raw())
+        sealed = self.advance("research_collection")
+        return sealed, next(
+            branch for branch in self.graphctl("status", "--run-id", "RUN-1")["branches"]
+            if branch["node_key"] == "tech_lead"
+        )
 
     def _resource_assessment(self, fanout, dependencies=None, claims=None):
         evidence = self.repo_artifact("finding", "fanout-resource-proof-" + str(self.counter))
@@ -215,7 +235,7 @@ class GraphHardeningTests(GraphCase):
         self.assertEqual(plan["size"], "small")
         self.assertTrue(plan["approval_required"])
         senior = next(item for item in plan["assignments"] if item["node_key"] == "senior_engineer")
-        self.assertEqual((senior["model"], senior["reasoning_effort"]), ("gpt-5.6-luna", "medium"))
+        self.assertEqual((senior["model"], senior["reasoning_effort"]), ("gpt-5.6-luna", "max"))
         ready = self.graphctl("next", "--run-id", "RUN-1")
         self.assertEqual(ready["code"], "EXECUTION_PLAN_APPROVAL_REQUIRED")
         with self.assertRaisesRegex(StateError, "EXECUTION_PLAN_APPROVAL_REQUIRED"):
@@ -226,7 +246,7 @@ class GraphHardeningTests(GraphCase):
             "--authority-ref", "authority:test", "--op-id", "plan-approval-1",
         )
         branch = self.claim()
-        self.assertEqual((branch["model"], branch["reasoning_effort"]), ("gpt-5.6-luna", "high"))
+        self.assertEqual((branch["model"], branch["reasoning_effort"]), ("gpt-5.6-luna", "max"))
 
     def test_rejected_execution_plan_blocks_the_run(self):
         initialized = self.initialize(approve=False)
@@ -292,11 +312,56 @@ class GraphHardeningTests(GraphCase):
         self.initialize()
         self._record_mapper(self.claim())
         branches = self.graphctl("status", "--run-id", "RUN-1")["branches"]
-        successor_id = next(item["branch_id"] for item in branches if item["node_key"] == "tech_lead")
+        successor_id = next(
+            item["branch_id"] for item in branches
+            if item["node_key"] == "design_research_architecture"
+        )
         with self.store.connect(self.store.db_path("albanian-live-translate", "RUN-1")) as connection:
+            # Research branches are persisted as collection members immediately,
+            # so disable SQLite FK enforcement only for this corruption probe.
+            connection.execute("PRAGMA foreign_keys=OFF")
             connection.execute("DELETE FROM nodes WHERE branch_id=?", (successor_id,))
             connection.commit()
-        self._assert_corrupt_mutation_rejected("TOPOLOGY_NODE_INVALID", "deleted-successor-claim")
+        self._assert_corrupt_mutation_rejected(
+            "TOPOLOGY_NODE_INVALID|JOIN_MEMBERSHIP_INVALID", "deleted-successor-claim"
+        )
+
+    def test_research_collection_witness_requires_exact_tech_lead_successor(self):
+        sealed, tech_lead = self._sealed_research()
+        database = self.store.db_path("albanian-live-translate", "RUN-1")
+        with self.store.connect(database) as connection:
+            rows = connection.execute("SELECT operation_id,response_json FROM operations").fetchall()
+            witness = next(
+                row for row in rows
+                if json.loads(row["response_json"]).get("join_id") == sealed["join_id"]
+            )
+            response = json.loads(witness["response_json"])
+            response["successor_branch_ids"] = []
+            connection.execute(
+                "UPDATE operations SET response_json=? WHERE operation_id=?",
+                (json.dumps(response, sort_keys=True), witness["operation_id"]),
+            )
+            connection.commit()
+        self._assert_corrupt_mutation_rejected("TOPOLOGY_HISTORY_INVALID", "missing-research-successor")
+
+    def test_research_tech_lead_successor_cannot_appear_on_unrelated_operation(self):
+        sealed, tech_lead = self._sealed_research()
+        database = self.store.db_path("albanian-live-translate", "RUN-1")
+        with self.store.connect(database) as connection:
+            rows = connection.execute("SELECT operation_id,response_json FROM operations").fetchall()
+            unrelated = next(
+                row for row in rows
+                if json.loads(row["response_json"]).get("code") == "BRANCH_RESULT_RECORDED"
+                and json.loads(row["response_json"]).get("branch_id")
+            )
+            response = json.loads(unrelated["response_json"])
+            response["successor_branch_ids"].append(tech_lead["branch_id"])
+            connection.execute(
+                "UPDATE operations SET response_json=? WHERE operation_id=?",
+                (json.dumps(response, sort_keys=True), unrelated["operation_id"]),
+            )
+            connection.commit()
+        self._assert_corrupt_mutation_rejected("TOPOLOGY_HISTORY_INVALID", "unrelated-research-successor")
 
     def test_extra_node_and_join_fail_before_mutation(self):
         self.initialize()
@@ -403,7 +468,10 @@ class GraphHardeningTests(GraphCase):
         self.advance("design_inputs")
         required = self.graphctl("next", "--run-id", "RUN-1")
         self.assertEqual(required["code"], "FANOUT_ASSESSMENT_REQUIRED")
-        fanout = self.graphctl("status", "--run-id", "RUN-1")["fanouts"][0]
+        fanout = next(
+            item for item in self.graphctl("status", "--run-id", "RUN-1")["fanouts"]
+            if item["stage"] == "design"
+        )
         before, after = fanout["member_branch_ids"]
         result = self.assess_fanout(fanout["fanout_id"], [{
             "before_branch_id": before, "after_branch_id": after, "reason": "shared review state",
@@ -440,7 +508,10 @@ class GraphHardeningTests(GraphCase):
         self._record_mapper(self.claim(), tags=["security_privacy"])
         self.success(self.claim())
         self.advance("design_inputs")
-        fanout = self.graphctl("status", "--run-id", "RUN-1")["fanouts"][0]
+        fanout = next(
+            item for item in self.graphctl("status", "--run-id", "RUN-1")["fanouts"]
+            if item["stage"] == "design"
+        )
         evidence = self.repo_artifact("finding", "assessment-proof")
 
         def manifest(member_ids):
@@ -464,7 +535,11 @@ class GraphHardeningTests(GraphCase):
                 "--fanout-id", fanout["fanout_id"], "--assessment-manifest", str(invalid_path),
                 "--authority-ref", "authority:test", "--op-id", "assessment-invalid",
             )
-        self.assertEqual(self.graphctl("status", "--run-id", "RUN-1")["fanouts"][0]["status"], "awaiting")
+        self.assertEqual(
+            next(item for item in self.graphctl("status", "--run-id", "RUN-1")["fanouts"]
+                 if item["fanout_id"] == fanout["fanout_id"])["status"],
+            "awaiting",
+        )
 
         valid_path = self.inbox_manifest(manifest(fanout["member_branch_ids"]))
         args = (

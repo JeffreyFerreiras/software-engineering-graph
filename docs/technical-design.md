@@ -30,6 +30,22 @@ The engine uses pragmatic inward-pointing boundaries:
 This separation keeps resource-conflict policy deterministic while leaving platform detection and
 side effects at the outer boundary.
 
+### Pre-design research gate
+
+Every initial `design_only` or `full_delivery` route, design revision, and delivery redesign inserts
+the fixed `design_research_architecture` and `design_research_validation` nodes for the target
+generation. Both nodes use the `impact_mapper` role with the approved Luna `max` assignment and
+are held in an assessed-pending `research` fan-out. Their envelopes carry deterministic focus and
+split `inspection_budget` values whose combined totals never exceed the task budget. Research
+capabilities are projected to `filesystem_read` and `external_read` effects only.
+
+Research is an evidence gate, not a decision gate. Its exact output contract requires an
+`evidence_manifest` artifact and verified evidence, while forbidding decisions and findings. The
+Supervisor atomically verifies and persists the result, seals `research_collection`, and includes
+the canonical collection and evidence inputs when creating the same-generation Tech Lead. No Tech
+Lead exists before that collection is sealed. If a mandatory research branch exhausts its retry,
+the collection advances to a durable blocked run rather than waiting indefinitely.
+
 ## Fan-out validation
 
 `validate_fanout_ordering` requires an explicit `case_sensitive` keyword. It preserves the existing
@@ -78,6 +94,10 @@ The reusable profile set remains exactly:
 Optional application-specialist protocol identifiers remain supported by topology and contract
 validation even though their role TOMLs are not part of the reusable profile set. No role
 substitution or topology change is introduced.
+
+All `gpt-5.6-luna` size assignments use reasoning effort `max`. Tech Lead and Architect use
+`gpt-5.6-sol` at every size. The centralized execution-plan invariant rejects an invalid model or
+effort before it can enter a persisted envelope.
 
 ## Contributor contract
 

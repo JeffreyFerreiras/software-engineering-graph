@@ -11,8 +11,7 @@ from graph_engine.ids import sha256_bytes
 from graph_engine.state import StateStore
 
 
-WORKSPACE = Path(r"C:\dev\GitHub\AlbanianLiveTranslate")
-POLICY_SOURCE = WORKSPACE / ".codex" / "engineering-graph.json"
+POLICY_SOURCE = Path(__file__).parent / "fixtures" / "engineering-graph.json"
 DIGEST = "a" * 64
 
 
@@ -113,12 +112,45 @@ class GraphCase(unittest.TestCase):
                 manifest["claim_digest"] = sha256_bytes(branch["claim_token"].encode("utf-8"))
         return self.inbox_manifest(manifest)
 
-    def claim(self) -> Dict[str, Any]:
+    def claim_raw(self) -> Dict[str, Any]:
         status = self.graphctl("status", "--run-id", "RUN-1")
         if status["next_action"]["kind"] == "record_fanout_assessment":
             self.assess_fanout(status["next_action"]["fanout_id"])
         self.counter += 1
         return self.graphctl("next", "--run-id", "RUN-1", "--claim", "--op-id", f"claim-{self.counter}")["branch"]
+
+    def _drain_research(self) -> None:
+        """Keep legacy flow helpers focused on their requested design branch."""
+        while True:
+            status = self.graphctl("status", "--run-id", "RUN-1")
+            action = status["next_action"]
+            if action["kind"] == "record_fanout_assessment" and action.get("stage") == "research":
+                self.assess_fanout(action["fanout_id"])
+                continue
+            research = [
+                branch for branch in status["branches"]
+                if branch["stage"] == "research" and branch["status"] in {"ready", "pending"}
+            ]
+            if research and any(branch["status"] == "ready" for branch in research):
+                branch = self.claim_raw()
+                self.success(branch)
+                continue
+            research_join = next(
+                (join for join in status["joins"]
+                 if join["join_key"] == "research_collection" and join["status"] == "open"),
+                None,
+            )
+            all_research = [branch for branch in status["branches"] if branch["stage"] == "research"]
+            if research_join and all_research and all(
+                branch["status"] in {"succeeded", "failed", "timed_out", "skipped"}
+                for branch in all_research
+            ):
+                self.advance("research_collection", research_join["generation"])
+            return
+
+    def claim(self) -> Dict[str, Any]:
+        self._drain_research()
+        return self.claim_raw()
 
     def record(self, branch: Dict[str, Any], manifest: Dict[str, Any]) -> Dict[str, Any]:
         self.counter += 1
@@ -167,13 +199,16 @@ class GraphCase(unittest.TestCase):
     def success(self, branch: Dict[str, Any], decision: Optional[str] = None, findings: Optional[List[Dict[str, str]]] = None) -> None:
         kind = branch["output_contract"]["artifact_kind"]
         artifact = self.repo_artifact(kind, branch["branch_id"])
+        evidence = []
+        if branch["node_key"] in {"design_research_architecture", "design_research_validation"}:
+            evidence = [self.repo_artifact("finding", branch["branch_id"] + "-evidence")]
         if decision is None and branch["output_contract"].get("decision_values"):
             decision = "APPROVE"
         manifest: Dict[str, Any] = {
             "schema_version": 1, "run_id": "RUN-1", "branch_id": branch["branch_id"],
             "status": "succeeded", "output_kind": kind,
             "artifact_ref": artifact,
-            "evidence": [], "findings": findings or [],
+            "evidence": evidence, "findings": findings or [],
         }
         if decision is not None:
             manifest["decision"] = decision

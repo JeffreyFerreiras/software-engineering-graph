@@ -1,7 +1,7 @@
 name = "senior_engineer"
 description = "Sole implementation writer for an approved software design and repair packets."
 model = "gpt-5.6-sol"
-model_reasoning_effort = "high"
+model_reasoning_effort = "medium"
 sandbox_mode = "workspace-write"
 developer_instructions = """
 Implement only the Supervisor-approved task brief, technical design, acceptance criteria,

@@ -611,6 +611,18 @@ def validate_result_manifest(value: Any, branch: Mapping[str, Any]) -> Dict[str,
         raise ContractError("status", "INVALID_RESULT_STATUS")
     if value["output_kind"] != branch["output_contract"]["artifact_kind"]:
         raise ContractError("output_kind", "OUTPUT_CONTRACT_MISMATCH")
+    research = branch["node_key"] in {
+        "design_research_architecture", "design_research_validation",
+    }
+    if research:
+        contract = branch["output_contract"]
+        if (
+            contract.get("artifact_required") is not True
+            or contract.get("evidence_required") is not True
+            or contract.get("decision_forbidden") is not True
+            or contract.get("findings_forbidden") is not True
+        ):
+            raise ContractError("output_contract", "RESEARCH_CONTRACT_INVALID")
     evidence = value["evidence"]
     if not isinstance(evidence, list):
         raise ContractError("evidence", "INVALID_LIST")
@@ -625,6 +637,8 @@ def validate_result_manifest(value: Any, branch: Mapping[str, Any]) -> Dict[str,
         evidence_keys.append((item["kind"], item["ref"], item["sha256"]))
     if len(set(evidence_keys)) != len(evidence_keys):
         raise ContractError("evidence", "DUPLICATE_VALUE")
+    if research and value["status"] == "succeeded" and not evidence:
+        raise ContractError("evidence", "EVIDENCE_REQUIRED")
     if value["status"] == "failed":
         opaque(value.get("failure_code"), "failure_code")
         if not evidence:
@@ -659,6 +673,10 @@ def validate_result_manifest(value: Any, branch: Mapping[str, Any]) -> Dict[str,
                 and not evidence):
             raise ContractError("evidence", "REDESIGN_EVIDENCE_REQUIRED")
     findings = value.get("findings", [])
+    if research and value.get("decision") is not None:
+        raise ContractError("decision", "DECISION_FORBIDDEN")
+    if research and findings:
+        raise ContractError("findings", "FINDINGS_FORBIDDEN")
     if not isinstance(findings, list):
         raise ContractError("findings", "INVALID_LIST")
     seen = set()
