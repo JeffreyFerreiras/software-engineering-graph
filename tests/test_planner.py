@@ -14,14 +14,14 @@ from tests.test_support import GraphCase
 EXPECTED_SIZE_ASSIGNMENTS = {
     "small": {
         "impact_mapper": ("gpt-5.6-luna", "max"),
-        "advisory_reviewer": ("gpt-5.6-luna", "max"),
+        "advisory_reviewer": ("gpt-5.6-luna", "low"),
         "tech_lead": ("gpt-5.6-sol", "medium"),
         "architect": ("gpt-5.6-sol", "medium"),
-        "senior_engineer": ("gpt-5.6-luna", "max"),
-        "code_reviewer": ("gpt-5.6-luna", "max"),
-        "test_engineer": ("gpt-5.6-luna", "max"),
-        "audio_realtime_specialist": ("gpt-5.6-luna", "max"),
-        "ios_platform_specialist": ("gpt-5.6-luna", "max"),
+        "senior_engineer": ("gpt-5.6-luna", "medium"),
+        "code_reviewer": ("gpt-5.6-luna", "medium"),
+        "test_engineer": ("gpt-5.6-luna", "medium"),
+        "audio_realtime_specialist": ("gpt-5.6-luna", "medium"),
+        "ios_platform_specialist": ("gpt-5.6-luna", "medium"),
         "release_operations_reviewer": ("gpt-5.6-sol", "medium"),
         "security_reviewer": ("gpt-5.6-sol", "high"),
         "supervisor": ("primary-thread", "inherited"),
@@ -33,7 +33,7 @@ EXPECTED_SIZE_ASSIGNMENTS = {
         "architect": ("gpt-5.6-sol", "high"),
         "senior_engineer": ("gpt-5.6-sol", "medium"),
         "code_reviewer": ("gpt-5.6-sol", "high"),
-        "test_engineer": ("gpt-5.6-luna", "max"),
+        "test_engineer": ("gpt-5.6-luna", "high"),
         "audio_realtime_specialist": ("gpt-5.6-sol", "high"),
         "ios_platform_specialist": ("gpt-5.6-sol", "high"),
         "release_operations_reviewer": ("gpt-5.6-sol", "high"),
@@ -74,13 +74,13 @@ class PlannerTests(GraphCase):
             },
         )
 
-    def test_luna_and_design_model_invariants_hold_at_every_size(self):
-        for size, assignments in SIZE_ASSIGNMENTS.items():
-            for role, (model, effort) in assignments.items():
-                if model == "gpt-5.6-luna":
-                    self.assertEqual(effort, "max", (size, role))
-            self.assertEqual(assignments["tech_lead"][0], "gpt-5.6-sol")
-            self.assertEqual(assignments["architect"][0], "gpt-5.6-sol")
+    def test_reasoning_effort_never_decreases_with_size(self):
+        ranks = {effort: rank for rank, effort in enumerate(("low", "medium", "high", "xhigh", "max"))}
+        for role in SIZE_ASSIGNMENTS["small"]:
+            efforts = [SIZE_ASSIGNMENTS[size][role][1] for size in ("small", "medium", "large")]
+            if efforts[0] == "inherited":
+                continue
+            self.assertEqual(efforts, sorted(efforts, key=ranks.__getitem__), role)
 
     def test_execution_plan_prefers_node_assignment_then_role_fallback(self):
         for size in SIZE_ASSIGNMENTS:
@@ -156,11 +156,16 @@ class PlannerTests(GraphCase):
                 ("impact_mapper", "gpt-5.6-luna", "max"),
             )
 
-    def test_model_assignment_invariant_fails_closed(self):
-        with self.assertRaisesRegex(ValueError, "LUNA_REASONING_EFFORT_REQUIRED"):
-            validate_model_assignment("impact_mapper", "gpt-5.6-luna", "high")
+    def test_impact_mapper_alias_and_design_model_invariants_fail_closed(self):
+        for node_key in (
+            "impact_mapper", "design_research_architecture", "design_research_validation",
+        ):
+            with self.assertRaisesRegex(ValueError, "IMPACT_MAPPER_ASSIGNMENT_REQUIRED"):
+                validate_model_assignment(node_key, "gpt-5.6-luna", "high")
+            with self.assertRaisesRegex(ValueError, "IMPACT_MAPPER_ASSIGNMENT_REQUIRED"):
+                validate_model_assignment(node_key, "gpt-5.6-sol", "max")
         with self.assertRaisesRegex(ValueError, "DESIGN_MODEL_REQUIRED"):
-            validate_model_assignment("tech_lead", "gpt-5.6-luna", "max")
+            validate_model_assignment("tech_lead", "gpt-5.6-luna", "medium")
 
     def test_multiple_specialists_are_canonical_and_mandatory(self):
         policy, _ = load_policy(self.repo)

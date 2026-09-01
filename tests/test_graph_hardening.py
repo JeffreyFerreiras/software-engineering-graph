@@ -235,7 +235,7 @@ class GraphHardeningTests(GraphCase):
         self.assertEqual(plan["size"], "small")
         self.assertTrue(plan["approval_required"])
         senior = next(item for item in plan["assignments"] if item["node_key"] == "senior_engineer")
-        self.assertEqual((senior["model"], senior["reasoning_effort"]), ("gpt-5.6-luna", "max"))
+        self.assertEqual((senior["model"], senior["reasoning_effort"]), ("gpt-5.6-luna", "medium"))
         ready = self.graphctl("next", "--run-id", "RUN-1")
         self.assertEqual(ready["code"], "EXECUTION_PLAN_APPROVAL_REQUIRED")
         with self.assertRaisesRegex(StateError, "EXECUTION_PLAN_APPROVAL_REQUIRED"):

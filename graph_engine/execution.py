@@ -12,14 +12,14 @@ TSHIRT_SIZES = ("small", "medium", "large")
 SIZE_ASSIGNMENTS: Dict[str, Dict[str, Tuple[str, str]]] = {
     "small": {
         "impact_mapper": ("gpt-5.6-luna", "max"),
-        "advisory_reviewer": ("gpt-5.6-luna", "max"),
+        "advisory_reviewer": ("gpt-5.6-luna", "low"),
         "tech_lead": ("gpt-5.6-sol", "medium"),
         "architect": ("gpt-5.6-sol", "medium"),
-        "senior_engineer": ("gpt-5.6-luna", "max"),
-        "code_reviewer": ("gpt-5.6-luna", "max"),
-        "test_engineer": ("gpt-5.6-luna", "max"),
-        "audio_realtime_specialist": ("gpt-5.6-luna", "max"),
-        "ios_platform_specialist": ("gpt-5.6-luna", "max"),
+        "senior_engineer": ("gpt-5.6-luna", "medium"),
+        "code_reviewer": ("gpt-5.6-luna", "medium"),
+        "test_engineer": ("gpt-5.6-luna", "medium"),
+        "audio_realtime_specialist": ("gpt-5.6-luna", "medium"),
+        "ios_platform_specialist": ("gpt-5.6-luna", "medium"),
         "release_operations_reviewer": ("gpt-5.6-sol", "medium"),
         "security_reviewer": ("gpt-5.6-sol", "high"),
         "supervisor": ("primary-thread", "inherited"),
@@ -31,7 +31,7 @@ SIZE_ASSIGNMENTS: Dict[str, Dict[str, Tuple[str, str]]] = {
         "architect": ("gpt-5.6-sol", "high"),
         "senior_engineer": ("gpt-5.6-sol", "medium"),
         "code_reviewer": ("gpt-5.6-sol", "high"),
-        "test_engineer": ("gpt-5.6-luna", "max"),
+        "test_engineer": ("gpt-5.6-luna", "high"),
         "audio_realtime_specialist": ("gpt-5.6-sol", "high"),
         "ios_platform_specialist": ("gpt-5.6-sol", "high"),
         "release_operations_reviewer": ("gpt-5.6-sol", "high"),
@@ -97,11 +97,11 @@ def validate_model_assignment(node_key: str, model: str, reasoning_effort: str) 
         raise ValueError("MODEL_ASSIGNMENT_INVALID")
     if model == "primary-thread" and reasoning_effort != "inherited":
         raise ValueError("SUPERVISOR_EFFORT_INVALID")
-    if model == "gpt-5.6-luna" and reasoning_effort != "max":
-        raise ValueError("LUNA_REASONING_EFFORT_REQUIRED")
     if node_key in {"tech_lead", "architect"} and model != "gpt-5.6-sol":
         raise ValueError("DESIGN_MODEL_REQUIRED")
-    if NODE_ROLES.get(node_key) == "impact_mapper" and model != "gpt-5.6-luna":
+    if NODE_ROLES.get(node_key) == "impact_mapper" and (
+        model != "gpt-5.6-luna" or reasoning_effort != "max"
+    ):
         raise ValueError("IMPACT_MAPPER_ASSIGNMENT_REQUIRED")
 
 
@@ -154,9 +154,6 @@ def build_execution_plan(
 def assignment_for(plan: Mapping[str, Any], node_key: str) -> Mapping[str, str]:
     for assignment in plan["assignments"]:
         if assignment["node_key"] == node_key:
-            validate_model_assignment(
-                node_key, assignment["model"], assignment["reasoning_effort"]
-            )
             return assignment
     raise ValueError("missing execution assignment")
 

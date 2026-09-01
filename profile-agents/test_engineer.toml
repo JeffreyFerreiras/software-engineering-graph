@@ -1,7 +1,7 @@
 name = "test_engineer"
 description = "Independent verification engineer for acceptance, regression, integration, and build evidence."
 model = "gpt-5.6-luna"
-model_reasoning_effort = "max"
+model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 developer_instructions = """
 Verify only the completed implementation against the task brief, approved design, acceptance
