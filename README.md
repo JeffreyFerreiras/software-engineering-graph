@@ -29,9 +29,8 @@ the roles the work needs:
 - **Security Reviewer** joins when security, privacy, identity, secrets, or trust boundaries are
   affected.
 - **Pull Request Engineer** is the required instruction-level publication role for every repository
-  implementation intended for delivery. After all gates pass, a fresh `gpt-5.6-luna` `max` dispatch
-  publishes the reviewed change. A separately approved later dispatch may remove its exact approved,
-  clean worktree. The role adds no eighth reusable profile or engine node.
+  implementation intended for delivery. A fresh `gpt-5.6-luna` `max` dispatch publishes after the gates
+  and may later perform separately approved cleanup. It adds no eighth profile or engine node.
 
 The workflow is deliberately bounded. It limits design and repair loops, separates writing from
 review, records evidence, and returns unresolved product or risk decisions to the human.
@@ -103,40 +102,25 @@ implementation scope and the publication contract below.
   `gpt-5.6-sol` at every size. Research output contracts require an `evidence_manifest`, verified
   evidence, a null decision, and empty findings.
 
-Publication work uses a dedicated registered worktree in one of two admissible states: clean at the
-exact reviewed commit; or with its complete staged and unstaged state exactly equal to the reviewed
-diff and no other tracked change, untracked or ignored entry, conflict, or active Git operation. In the
-second state, the Pull Request Engineer may stage and commit exactly that state without changing file
-content. It receives only the reviewed stable change and exact repository, remote, base, and head
-authority. It never forces, amends, rewrites history, or creates a duplicate pull request, creates a
-draft only when explicitly requested, and otherwise creates a review-ready pull request. It refuses
-every other uncommitted or unrelated state, secret risk, and identity mismatches.
+Implementation authorization and initial plan approval cover the plan's exact non-force commit, push,
+and PR actions after all gates; no later publication approval is needed. The Supervisor and Senior
+Engineer never publish. Successful delivery requires one review-ready PR, or the exact existing PR
+updated and verified; draft only on explicit request.
 
-The user's authorization for repository implementation and approval of its initial execution plan are
-sufficient authority for the normal non-force commit, push, and pull-request actions after every
-required gate passes. The plan names the Pull Request Engineer and exact repository, remote, base, head,
-and action authority. No separate publication-specific approval or second approval immediately before
-push or pull-request creation is required. The effort cannot close successfully until exactly one
-review-ready pull request is created or the exact existing pull request is updated and verified. An
-explicitly requested draft is the only exception to review-ready status.
+Publication uses the dedicated implementation worktree, exact repository/remote/base/head, and reviewed
+commit or exact staged-plus-unstaged diff. It rejects other tracked, untracked, ignored, conflicted, or
+Git-operation state, identity mismatch, secrets, ambiguity, duplicates, force, amend, or history rewrite.
 
-Before publication or cleanup, the Pull Request Engineer inspects only its exposed session skill
-catalog and local skills explicitly declared by applicable repository instructions; it does not crawl
-arbitrary profile or global skill directories. It selects the smallest relevant set for that phase and
-reads every selected `SKILL.md` fully. Its assignment and protocol do not prescribe or name a specific
-optional skill. A discovered skill may change method only, never approved scope, phase, model or effort,
-authority, writable files, Git, GitHub, or worktree actions, external effects, or permission to install,
-synchronize, remove, or mutate skills, profiles, or consumer repositories. Controlling instructions
-win and conflicts are reported. An unavailable catalog or unreadable selected skill is reported, and
-work proceeds only when the controlling instructions suffice. Each publication or cleanup handoff has
-a `Skill usage` section with every selected skill's name, safe provenance, relevance, and failures, or
-`None`.
+Before publication or cleanup, the Pull Request Engineer selects and fully reads the smallest relevant
+set from its exposed catalog and repository-declared local skills, without crawling other skill trees or
+naming an optional skill. Skills cannot expand authority or effects; controlling instructions win, and
+conflicts or unavailable content are reported. Each handoff reports `Skill usage`, including provenance,
+relevance, failures, or `None`.
 
-After the exact pull request approval is verified, separately approved cleanup uses a fresh Luna-max
-dispatch from another worktree. It may only remove the exact clean, registered, unlocked worktree with
-non-forced `git worktree remove`; any tracked, staged, untracked, ignored, locked, or ambiguous state
-fails closed. Cleanup preserves the branch and never recursively deletes, forces, prunes, or deletes
-the branch, so the worktree remains recreatable.
+After required PR approval and separate cleanup approval, a fresh Luna-max dispatch may run from any
+safe checkout or execution context outside the exact clean, registered target; no cleanup worktree is
+created. It uses only non-forced `git worktree remove`, preserves the branch, and refuses dirty,
+untracked, ignored, locked, or ambiguous state, recursive deletion, force, prune, or branch deletion.
 
 On Windows, the ledger requires `--ack-degraded-permissions` because Python cannot prove exclusive
 profile permissions. `--ack-degraded-durability` is only for environments where directory syncing is

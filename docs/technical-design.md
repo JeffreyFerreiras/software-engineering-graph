@@ -48,53 +48,31 @@ the collection advances to a durable blocked run rather than waiting indefinitel
 
 ### Required instruction-level pull-request publication
 
-`Pull Request Engineer` is the required publication role for every successfully completed repository
-implementation intended for delivery, not an engine node, reusable profile, schema, table, provider
-adapter, or specialist identifier. The human-facing execution plan names its exact `gpt-5.6-luna`
-`max` assignment and exact repository, remote, base, head, and permitted non-force commit, push, and
-pull-request actions. The user's implementation authorization and initial execution-plan approval are
-sufficient authority after all required gates pass; publication does not require a separate approval
-or a second approval immediately before push or pull-request creation. Cleanup remains a separately
-approved fresh dispatch because it removes a worktree.
+`Pull Request Engineer` is an instruction-only role with no profile, engine node, schema, table,
+provider, credentials, or specialist identifier. Every repository implementation intended for delivery
+plans a fresh exact `gpt-5.6-luna` `max` publication dispatch with exact repository, remote, base, head,
+and non-force actions. Implementation authorization plus initial plan approval is sufficient after all
+gates; no later publication approval is needed. The Supervisor owns control and evidence but performs no
+Git, GitHub, or worktree mutation; the Senior Engineer writes source and tests but never publishes.
+Successful closure requires one review-ready PR, or the exact existing PR updated and verified; an
+explicit draft request is the only exception.
 
-Before acting, each publication or cleanup dispatch inspects only the skill catalog exposed to its
-current session and local skills explicitly declared by applicable repository instructions. It does not
-crawl arbitrary profile or global skill directories. The Pull Request Engineer selects the smallest
-clearly relevant set for its assigned phase and reads each selected `SKILL.md` fully. Neither the role
-assignment nor the protocol prescribes or names a specific optional skill.
+Each phase selects and fully reads the smallest relevant exposed or repository-declared skill set,
+without naming an optional skill or crawling other skill trees. Skills may change method, never approved
+authority or effects. Controlling instructions win; conflicts and unavailable content are reported, and
+the handoff records `Skill usage` with provenance, relevance, failures, or `None`.
 
-Discovered skills may alter method only, not approved scope, phase, model or reasoning effort,
-authority, writable files, permitted Git, GitHub, or worktree actions, external effects, or permission
-to install, synchronize, remove, or mutate skills, profiles, or consumer repositories. Controlling
-user, repository, plan, authority, and role instructions take precedence, and conflicts are reported.
-If the catalog is unavailable or a selected skill is unreadable, the dispatch reports the condition
-and proceeds only when the controlling instructions remain sufficient. Its publication or cleanup
-handoff includes `Skill usage` with each selected skill's name, safe provenance, phase relevance, and
-any discovery or read failure, or `None` when no skill was selected.
+Publication uses the dedicated implementation worktree and exact reviewed commit, or an exact complete
+staged-plus-unstaged diff with no other tracked, untracked, ignored, conflicted, or Git-operation state.
+Only that diff may be staged and committed without content changes. The role creates or reuses one
+commit, pushes without force, and creates or updates the one PR. Identity mismatch, secrets, ambiguity,
+duplicates, force, amend, history rewrite, and scope expansion fail closed.
 
-The Supervisor retains scope, plan, ledger, evidence-validation, dispatch, and synthesis ownership but
-performs no Git, GitHub, or worktree mutation. The Senior Engineer remains the sole source and test
-writer and performs no publication operation. A publication dispatch receives only a reviewed stable
-diff or commit and exact repository, remote, base, and head authority. It may create or reuse the one
-scoped commit, push without force, and must create exactly one review-ready pull request or update and
-verify the exact existing pull request. An explicitly requested draft is the only exception to review-
-ready status. The delivery effort cannot close successfully before that exact publication evidence is
-validated. Unrelated or uncommitted ambiguity, secrets risk, identity mismatch, duplicate or ambiguous
-pull requests, force, amend, history rewrite, and scope expansion fail closed.
-
-Implementation and publication use a dedicated registered worktree. Pre-publication admits exactly two
-states: clean at the exact reviewed commit; or with the complete staged and unstaged state exactly equal
-to the reviewed diff and no other tracked change, untracked or ignored entry, conflict, or active Git
-operation. In the latter state, the Pull Request Engineer may stage and commit exactly that state without
-changing file content. After the exact pull request approval is verified, a separately approved fresh
-Luna-max cleanup dispatch operates from another worktree and may run only non-forced
-`git worktree remove` for that exact target. It reverifies the registration, target identity, branch,
-HEAD, pull request, and approval; staged, unstaged, untracked, ignored, locked, or ambiguous state blocks
-removal. It preserves the branch and never recursively deletes, forces, prunes, or deletes the branch,
-so the worktree can be recreated.
-
-This repository specifies that instruction contract only. It adds no remote executor, credentials,
-engine-enforced publication state, or cleanup mechanism.
+After required PR approval and separate cleanup approval, a fresh Luna-max dispatch must use an existing
+safe checkout or execution context outside the exact clean, registered target; it must not create a
+separate, new, or dedicated cleanup worktree. It reverifies target, branch, HEAD, PR, and approval,
+then uses only non-forced `git worktree remove`. Dirty, untracked, ignored, locked, or ambiguous state blocks removal;
+the branch is preserved and recursive deletion, force, prune, and branch deletion are forbidden.
 
 ## Fan-out validation
 
@@ -245,10 +223,8 @@ current local mode is advisory when no trusted assertion is available.
 ## Contributor contract
 
 Changes must preserve unrelated work, remain within approved files and behavior, add no dependency
-or packaging system, and avoid generated artifacts. Normal non-force commit, push, and pull-request
-publication for an approved repository implementation follows the required contract above and needs no
-second approval. Profiles, other consumer-repository or remote-system changes, deployment, and release
-operations require separately approved scope.
+or packaging system, and avoid generated artifacts. Approved implementation publication follows the
+contract above; profiles, other remote changes, deployment, and release require separate scope.
 
 Only the focused suite below is permitted during implementation:
 
