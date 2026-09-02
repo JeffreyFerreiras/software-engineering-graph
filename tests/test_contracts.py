@@ -29,6 +29,18 @@ def _validate_json_schema(value, schema, root, path="$", seen_refs=None):
             raise AssertionError("recursive schema reference at " + path)
         return _validate_json_schema(value, target, root, path, seen_refs | {marker})
 
+    if "anyOf" in schema:
+        errors = []
+        for candidate in schema["anyOf"]:
+            try:
+                _validate_json_schema(value, candidate, root, path, seen_refs)
+                break
+            except AssertionError as error:
+                errors.append(str(error))
+        else:
+            raise AssertionError("{}: no anyOf alternative matched ({})".format(path, "; ".join(errors)))
+        return
+
     if "const" in schema and value != schema["const"]:
         raise AssertionError("{}: expected {!r}, got {!r}".format(path, schema["const"], value))
     if "enum" in schema and value not in schema["enum"]:
@@ -42,8 +54,10 @@ def _validate_json_schema(value, schema, root, path="$", seen_refs=None):
             "string": lambda item: isinstance(item, str),
             "integer": lambda item: isinstance(item, int) and not isinstance(item, bool),
             "boolean": lambda item: isinstance(item, bool),
+            "null": lambda item: item is None,
         }
-        if expected_type not in type_matches or not type_matches[expected_type](value):
+        expected_types = expected_type if isinstance(expected_type, list) else [expected_type]
+        if not any(item in type_matches and type_matches[item](value) for item in expected_types):
             raise AssertionError("{}: expected {}".format(path, expected_type))
 
     if isinstance(value, dict):

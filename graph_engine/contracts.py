@@ -399,7 +399,7 @@ def validate_task_brief(value: Any, policy_digest: str, policy: Mapping[str, Any
         "evidence_paths", "inspection_budget", "required_check_ids",
         "required_human_decisions",
     }
-    require_keys(value, required, required, "task_brief")
+    require_keys(value, required, required | {"reviewer_delegation"}, "task_brief")
     if value["schema_version"] != 1:
         raise ContractError("schema_version", "UNSUPPORTED_SCHEMA")
     opaque(value["task_id"], "task_id")
@@ -431,6 +431,10 @@ def validate_task_brief(value: Any, policy_digest: str, policy: Mapping[str, Any
         bounded_string(criterion["text"], "acceptance_criteria.text")
     if len(set(criterion_ids)) != len(criterion_ids):
         raise ContractError("acceptance_criteria", "DUPLICATE_ID")
+    from .reviewer_delegation import validate_task_config
+    reviewer_delegation = validate_task_config(
+        value.get("reviewer_delegation"), policy.get("reviewer_delegation"), criterion_ids,
+    )
     if value["risk_level"] not in {"low", "medium", "high", "critical"}:
         raise ContractError("risk_level", "UNKNOWN_VALUE")
     if value["risk_level"] == "critical" and mode == "delivery":
@@ -496,12 +500,25 @@ def validate_task_brief(value: Any, policy_digest: str, policy: Mapping[str, Any
     result = dict(value)
     result["mandatory_impact_tags"] = tags
     result["authority"] = {"capabilities": sorted(canonical_capabilities, key=lambda c: (c["effect"], c["action"], c["target_ref"]))}
+    if reviewer_delegation is not None:
+        for assignment in reviewer_delegation["assignments"]:
+            role_caps = {
+                (cap["effect"], cap["action"], cap["target_ref"])
+                for cap in policy["role_capabilities"].get(assignment["role"], [])
+                if cap["effect"] in {"filesystem_read", "external_read"}
+                and cap["target_ref"] in assignment["scope_refs"]
+            }
+            assignment["effect_capabilities"] = [
+                cap for cap in result["authority"]["capabilities"]
+                if (cap["effect"], cap["action"], cap["target_ref"]) in role_caps
+            ]
+        result["reviewer_delegation"] = reviewer_delegation
     return result
 
 
 def authoritative_task_subset(value: Mapping[str, Any]) -> Dict[str, Any]:
     """Return only approved structured task metadata suitable for the ledger."""
-    return {
+    result = {
         "schema_version": value["schema_version"],
         "task_id": value["task_id"],
         "request_mode": value["request_mode"],
@@ -516,6 +533,9 @@ def authoritative_task_subset(value: Mapping[str, Any]) -> Dict[str, Any]:
         "required_check_ids": list(value["required_check_ids"]),
         "required_human_decisions": list(value["required_human_decisions"]),
     }
+    if value.get("reviewer_delegation") is not None:
+        result["reviewer_delegation"] = value["reviewer_delegation"]
+    return result
 
 
 def validate_impact_map(value: Any, task: Mapping[str, Any], policy: Mapping[str, Any]) -> Dict[str, Any]:
@@ -557,11 +577,12 @@ def validate_result_manifest(value: Any, branch: Mapping[str, Any]) -> Dict[str,
     if branch["node_key"] in {"supervisor_design_consolidation", "supervisor_delivery_consolidation"}:
         if not isinstance(value, dict):
             raise ContractError("consolidation", "INVALID_OBJECT")
-        allowed = {
+        required = {
             "schema_version", "kind", "run_id", "join_id", "generation",
             "source_branch_ids", "finding_dispositions", "outcome", "attempt_id", "claim_digest",
         }
-        require_keys(value, allowed, allowed, "consolidation")
+        allowed = required | {"delegated_finding_dispositions"}
+        require_keys(value, required, allowed, "consolidation")
         _validate_attempt(value, "consolidation")
         if value["schema_version"] != 1 or value["run_id"] != branch["run_id"]:
             raise ContractError("consolidation", "RUN_OR_SCHEMA_MISMATCH")
@@ -585,6 +606,28 @@ def validate_result_manifest(value: Any, branch: Mapping[str, Any]) -> Dict[str,
             if item["finding_id"] in seen:
                 raise ContractError("finding_id", "DUPLICATE_ID")
             seen.add(item["finding_id"])
+        delegated_dispositions = value.get("delegated_finding_dispositions", [])
+        if not isinstance(delegated_dispositions, list):
+            raise ContractError("delegated_finding_dispositions", "INVALID_LIST")
+        delegated_seen = set()
+        for item in delegated_dispositions:
+            if not isinstance(item, dict):
+                raise ContractError("delegated_finding_dispositions", "INVALID_OBJECT")
+            require_keys(item, {"issue_key", "source_identities", "disposition"},
+                         {"issue_key", "source_identities", "disposition"}, "delegated_finding_dispositions")
+            issue_key = bounded_string(item["issue_key"], "issue_key", 4096)
+            if issue_key in delegated_seen or item["disposition"] not in {"accept", "repair", "redesign", "block"}:
+                raise ContractError("delegated_finding_dispositions", "DUPLICATE_OR_INVALID_DISPOSITION")
+            delegated_seen.add(issue_key)
+            if not isinstance(item["source_identities"], list) or not item["source_identities"]:
+                raise ContractError("source_identities", "INVALID_LIST")
+            identities = []
+            for identity in item["source_identities"]:
+                if not isinstance(identity, list) or len(identity) != 3:
+                    raise ContractError("source_identities", "INVALID_LIST")
+                identities.append(tuple(opaque(part, "source_identity") for part in identity))
+            if len(identities) != len(set(identities)) or identities != sorted(identities):
+                raise ContractError("source_identities", "DUPLICATE_OR_NON_CANONICAL")
         outcomes = {"APPROVE", "REVISE", "BLOCK"} if expected_kind.startswith("design") else {"ACCEPT", "REPAIR", "REDESIGN", "BLOCK"}
         if value["outcome"] not in outcomes:
             raise ContractError("outcome", "UNKNOWN_VALUE")
@@ -600,7 +643,10 @@ def validate_result_manifest(value: Any, branch: Mapping[str, Any]) -> Dict[str,
         "schema_version", "run_id", "branch_id", "status", "output_kind",
         "artifact_ref", "evidence", "decision", "findings", "failure_code",
         "kind", "join_id", "generation", "source_branch_ids", "finding_dispositions",
-        "outcome", "attempt_id", "claim_digest",
+        "delegated_finding_dispositions",
+        "outcome", "attempt_id", "claim_digest", "review_request_slots",
+        "child_members", "terminal_non_successes",
+        "finding_sources",
     }
     required = {"schema_version", "run_id", "branch_id", "status", "output_kind", "evidence", "attempt_id", "claim_digest"}
     require_keys(value, required, allowed, "result")
@@ -641,10 +687,12 @@ def validate_result_manifest(value: Any, branch: Mapping[str, Any]) -> Dict[str,
         raise ContractError("evidence", "EVIDENCE_REQUIRED")
     if value["status"] == "failed":
         opaque(value.get("failure_code"), "failure_code")
-        if not evidence:
+        if not evidence and branch.get("depth") != 1:
             raise ContractError("evidence", "EVIDENCE_REQUIRED")
     else:
         artifact = value.get("artifact_ref")
+        if branch.get("depth") == 1 and artifact is not None:
+            raise ContractError("artifact_ref", "DELEGATION_ARTIFACT_FORBIDDEN")
         redesign_required = (
             branch["node_key"] == "senior_engineer"
             and value.get("decision") == "REDESIGN_REQUIRED"
@@ -679,6 +727,8 @@ def validate_result_manifest(value: Any, branch: Mapping[str, Any]) -> Dict[str,
         raise ContractError("findings", "FINDINGS_FORBIDDEN")
     if not isinstance(findings, list):
         raise ContractError("findings", "INVALID_LIST")
+    if branch.get("depth") == 1:
+        return dict(value)
     seen = set()
     for finding in findings:
         if not isinstance(finding, dict):

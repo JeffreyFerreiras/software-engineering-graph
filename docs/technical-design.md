@@ -57,6 +57,90 @@ Case-only resource names conflict when `case_sensitive` is false and remain dist
 The same value is used when recording a live assessment and when later validating persisted state,
 including status, ready/next, mutation closure, and resume flows.
 
+## Reviewer-initiated conditional fan-out
+
+The current safety property is Supervisor-owned dispatch and state mutation. The former inability of
+a reviewer to request bounded assistance was incidental, not a safety requirement. Schema 6 retains
+the safety property while adding an ID-only request channel.
+
+Delegation is default-off. Repository and task contracts may only lower engine ceilings: depth 1,
+3 children per request, 6 per run, 2 rounds per primary reviewer generation, and weighted cost 15.
+The default round ceiling is 1. Supported delegable weights are Luna max 3; Sol high 3, xhigh 4,
+and max 5. Luna low, medium, and high remain unsupported. Primary-thread assignments are forbidden. Only `code_reviewer` and
+`security_reviewer` are initially eligible, and derived capabilities contain filesystem/external
+read effects only.
+
+Execution-plan v2 freezes conditional assignments before human approval. Each assignment contains
+an ID, role, model, effort, review lens and prompt template, reason/acceptance/evidence/scope ceilings,
+derived read-only capabilities, maximum instances, and dispatch weight. Delegation-disabled runs
+continue to emit execution-plan v1 so asserted legacy plans, topology, envelopes, IDs, and traces do
+not change.
+
+The primary reviewer returns either its ordinary final result or two data artifacts:
+`review_preliminary` and `review_fanout_request`. The request is exhaustive and contains only the run,
+parent branch and attempt, round, assignment IDs, ordinals, declared reason codes, allowed acceptance
+IDs, and evidence IDs frozen in the preliminary artifact. Raw role, model, effort, capability,
+permission, path, external target, prompt, lens, arbitrary authority/reference, operation ID, and
+dispatch fields are rejected.
+
+`record review-fanout` is a Supervisor-only atomic mutation. It checks the live claim fence, resolves
+all authority and scope from immutable artifacts, computes a content-independent request slot from
+the run/policy/plan/parent claim/generation/round, stores the request digest separately, reserves the
+full dispatch cost, freezes artifacts, creates explicit depth-1 child identities, opens the assessed
+fan-out and nested collection, closes the old parent attempt as `delegated`, and moves the parent to
+`waiting_for_review_children` with no live runtime fence. Failure rolls back every effect. Only an
+identical operation-ID replay is idempotent; every fresh operation against an existing slot conflicts.
+
+Children use the ordinary claim, lease, heartbeat, result, retry, timeout, and skip paths. Terminal
+non-successes remain members and cost is never refunded. When all members settle, the collection is
+sealed with each member's exact canonical result or typed timeout/skip control record, artifact
+identity, evidence, and attempt history, and the same parent becomes ready. Its next claim creates a
+fresh attempt. The persisted envelope retains the immutable ledger record, while `ready`, `next`, and
+claim responses use a separately constructed, explicit-allowlist dispatch projection. It omits
+task-wide authority and exposes only the reviewer's effective filesystem/external read capabilities.
+The projection cumulatively binds every slot and collection digest, exact child tuple, terminal
+non-success, and composite finding source across all rounds without ledger references, operation IDs,
+authority/actor/host metadata, sibling claims, or unrelated budget data. Each child receives only its
+assignment scope plus selected evidence IDs, kinds, and opaque digests, never the full preliminary or
+assessment data.
+
+The resumed final result must exactly bind all slots, nested digests, child tuples, terminal
+non-successes, and finding source tuples. Every raw nested collection is independently injected into
+Supervisor consolidation in addition to the parent result. Canonical issues use
+acceptance ID, normalized repository location, and stable defect/rule ID. Role, lens, branch, model,
+assignment, and finding ID remain provenance. Cumulative source equality and Supervisor dispositions
+use the composite request-slot, source-branch, and role-local finding ID, so the same finding ID may be
+used independently by different children or rounds. Matching fix variants deduplicate with the lowest
+branch ID canonical; incompatible variants remain one conflict group. Delegated issue identities come
+only from the sealed raw nested collections. The Supervisor must disposition every issue exactly once;
+`accept < repair < redesign < block` is combined with ordinary delivery precedence, while child choices
+and the resumed parent's echoed delegated disposition do not independently affect the outcome.
+
+### Chosen and rejected designs
+
+The chosen design extends the existing SQLite ledger, atomic mutation, artifact registry, fan-out
+assessment, and branch lifecycle. It avoids a second scheduler and keeps recovery under `resume`.
+Direct reviewer spawning was rejected because it bypasses plan approval, budgets, fencing, resource
+assessment, and audit state. Reusing `specialist_tag` was rejected because repeated same-role children
+need explicit assignment and ordinal identity. A standalone Court skill, panel, or orchestration layer
+is out of scope.
+
+### Compatibility, recovery, and rollback
+
+| State | Engine behavior |
+| --- | --- |
+| Schema 5 + old engine | Finish normally |
+| Schema 5 + schema-6 engine | `UNSUPPORTED_STATE_SCHEMA`; restart |
+| Schema 6 + old engine | Rejected; never downgraded |
+| Schema 6, delegation absent | Legacy execution-plan v1 and unchanged route topology |
+| Schema 6, delegation enabled | Execution-plan v2 conditional assignments |
+
+There is no in-place migration. Rollback means stop creating schema-6 runs, let schema-5 runs finish
+under their prior engine, and restart incomplete schema-6 work under an explicitly selected compatible
+engine. Retained ledgers remain audit evidence. Resume can recover before assessment, with pending or
+running children, after a sealed collection, or while the parent awaits/follows continuation; stale
+attempt fences remain invalid at every point.
+
 ## Mutation transaction contract
 
 `StateStore.mutate` requires a semantic validator for every new mutation. Its ordering is fixed:
@@ -77,9 +161,9 @@ Post-action validation failure rolls back the action, revision, operation, and e
 
 ## Preserved compatibility
 
-Public CLI commands, JSON output, exit codes, stable IDs, routes, specialist protocol identifiers,
-schemas, and SQLite semantics remain unchanged. State schema 5 remains authoritative. Older schema 2,
-3, and 4 runs continue to fail closed without migration.
+Delegation-disabled CLI behavior, exit codes, stable IDs, routes, specialist protocol identifiers,
+and SQLite transition semantics remain unchanged. State schema 6 is authoritative. Schema 5 and older
+runs fail closed in this engine without migration.
 
 The reusable profile set remains exactly:
 
@@ -109,7 +193,7 @@ Only the focused suite below is permitted during implementation:
 
 ```powershell
 $env:PYTHONDONTWRITEBYTECODE = '1'
-python -m unittest -v tests.test_contracts tests.test_planner tests.test_validator tests.test_state tests.test_cli tests.test_graph_hardening
+python -m unittest -v tests.test_contracts tests.test_planner tests.test_validator tests.test_state tests.test_cli tests.test_graph_hardening tests.test_reviewer_delegation
 ```
 
 After final review, the Supervisor runs the local read-only hygiene check separately and last:
