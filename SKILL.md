@@ -56,6 +56,29 @@ its status and protect unrelated changes before delegating.
    `record branch-result` with the claimed `attempt_id` and `claim_token`. Branch manifests never
    contain control mutations.
 
+### Optional reviewer delegation
+
+Delegation is disabled unless both the repository policy and task brief provide
+`reviewer_delegation`. An enabled execution-plan v2 lists every conditional assignment and its exact
+role, model, effort, lens, prompt template, reason/acceptance/evidence/scope ceilings, derived
+read-only capabilities, instance limit, and dispatch weight. Human approval covers these values.
+
+A primary Code Reviewer may return `review_preliminary` plus `review_fanout_request`; it never
+dispatches children. The Supervisor records both with the live attempt fence:
+
+`python <skill>/scripts/graphctl.py --repo <repo> record review-fanout --run-id <id> --branch-id <id> --attempt-id <id> --claim-token <token> --preliminary-manifest <path> --request-manifest <path> --authority-ref authority:<id> --op-id <id>`
+
+When status requests it, the Supervisor records the read-only resource assessment:
+
+`python <skill>/scripts/graphctl.py --repo <repo> record review-fanout-assessment --run-id <id> --request-slot-id <id> --assessment-manifest <path> --authority-ref authority:<id> --op-id <id>`
+
+The engine permits depth 1, at most 3 children per request, 6 children and weighted cost 15 per run,
+and at most 2 request rounds. The default round ceiling is 1. Effective values are the minimum of
+engine, repository, task, and approved-plan ceilings. Child failures, timeouts, and skips stay in the
+nested collection and never refund cost. Once every member settles, the parent becomes ready with a
+fresh claim fence and a redacted continuation that cumulatively binds every slot/collection digest,
+exact member tuple, terminal non-success, and finding source without ledger or operation metadata.
+
 On Windows, pass `--ack-degraded-permissions` because Python cannot prove profile DACL exclusivity.
 Pass `--ack-degraded-durability` only when directory sync is genuinely unavailable and the reported
 degraded mode is acceptable. These flags acknowledge platform limitations; they grant no authority.
@@ -86,7 +109,7 @@ degraded mode is acceptable. These flags acknowledge platform limitations; they 
   are satisfied. Use `abort` for rollback; retained databases are audit evidence and are not deleted.
 
 `status --json` is the supported export. Treat it as sensitive operational metadata.
-It also reports schema-5 attempt counts and deterministic UTC wall-clock timing. Retry waits count toward
+It also reports schema-6 attempt counts and deterministic UTC wall-clock timing. Retry waits count toward
 branch lifecycle wall time but not active duration or critical-path weight.
 
 ## Operating model
@@ -255,6 +278,10 @@ After implementation reaches a stable checkpoint, run the Code Reviewer and Test
 
 Require the Code Reviewer to evaluate correctness, regressions, design fidelity, maintainability, security implications, and test adequacy against the approved artifacts.
 
+An enabled primary Code Reviewer may request approved read-only review children, but may not choose
+raw roles/models/efforts/capabilities, dispatch them, inspect control metadata, suppress their frozen
+collection, or decide findings. The Supervisor validates and consolidates every child outcome.
+
 Include the bounded role skill preflight without naming an optional skill. Keep the reviewer read-only,
 limit discovery to the assigned review context, and require its `Skill usage` report in the review
 handoff before accepting the result.
@@ -317,5 +344,7 @@ Require these minimum handoffs:
 - **Design review:** decision, finding IDs, evidence, required revisions, unresolved decisions.
 - **Implementation handoff:** changed files, acceptance mapping, focused checks, deviations, risks, skill usage.
 - **Code review:** decision, prioritized findings, evidence, missing tests, design conformance, skill usage.
+- **Review preliminary/request:** frozen findings and evidence plus an exhaustive ID-only conditional
+  fan-out request; never raw authority, paths, prompts, operation IDs, or dispatch data.
 - **Test report:** decision, environment, commands, acceptance matrix, failures, untested gaps.
 - **Closure:** delivered outcome, validation, residual risks, approvals, next action.

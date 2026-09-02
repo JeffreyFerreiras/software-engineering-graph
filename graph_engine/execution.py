@@ -3,6 +3,7 @@
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 from .ids import canonical_bytes, sha256_bytes
+from .reviewer_delegation import plan_fragment
 
 
 TSHIRT_SIZES = ("small", "medium", "large")
@@ -133,8 +134,9 @@ def build_execution_plan(
             "reasoning_effort": effort,
             "dispatch_when": DISPATCH_WHEN[node_key],
         })
+    delegation = task.get("reviewer_delegation")
     plan = {
-        "schema_version": 1,
+        "schema_version": 2 if delegation is not None else 1,
         "run_id": run_id,
         "task_id": task["task_id"],
         "size": size,
@@ -147,6 +149,9 @@ def build_execution_plan(
         "approval_id": "execution_plan",
         "approval_required": True,
     }
+    if delegation is not None:
+        plan["conditional_review_assignments"] = plan_fragment(delegation)
+        plan["reviewer_delegation_limits"] = dict(delegation["limits"])
     plan["plan_digest"] = sha256_bytes(canonical_bytes(plan))
     return plan
 

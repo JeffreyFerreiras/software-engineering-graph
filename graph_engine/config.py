@@ -8,6 +8,7 @@ from .contracts import (
     ContractError, EFFECTS, RISK_TAGS, Snapshot, lexical_relative, opaque, require_keys,
     safe_json_snapshot, validate_ref,
 )
+from .reviewer_delegation import validate_policy_config
 
 
 ENGINE_ROUTES = {
@@ -219,7 +220,7 @@ def load_policy(repo: Path) -> Tuple[Dict[str, Any], Snapshot]:
         "artifact_kinds", "impact_tags", "routes", "node_templates", "specialists",
         "limits", "required_checks", "role_capabilities", "denied_patterns",
     }
-    require_keys(value, required, required, "policy")
+    require_keys(value, required, required | {"reviewer_delegation"}, "policy")
     if value["schema_version"] != 1:
         raise ContractError("policy.schema_version", "UNSUPPORTED_SCHEMA")
     opaque(value["repository_id"], "repository_id")
@@ -356,6 +357,9 @@ def load_policy(repo: Path) -> Tuple[Dict[str, Any], Snapshot]:
     for pattern in denials:
         if not isinstance(pattern, str) or not pattern or len(pattern) > 256:
             raise ContractError("denied_patterns", "INVALID_PATTERN")
+    reviewer_delegation = validate_policy_config(value.get("reviewer_delegation"))
+    if reviewer_delegation is not None:
+        value["reviewer_delegation"] = reviewer_delegation
     return value, snapshot
 
 

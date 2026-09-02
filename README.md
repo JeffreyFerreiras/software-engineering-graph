@@ -42,6 +42,12 @@ review, records evidence, and returns unresolved product or risk decisions to th
    selected agents continue through bounded design, implementation, review, and test handoffs.
 5. The Supervisor closes the run only when the approved criteria and required checks have evidence.
 
+When both repository policy and task brief opt in, an approved execution-plan v2 can also contain
+conditional review assignments. A primary Code Reviewer may then return a frozen preliminary review
+and a typed request using only approved assignment, reason, acceptance, and evidence IDs. The
+Supervisor remains the only dispatcher and ledger mutator. Delegated reviewers receive fresh,
+read-only envelopes and cannot create another delegation level.
+
 A local control ledger tracks assignments, approvals, retries, active-work ownership, and recovery
 so the workflow behaves consistently and deterministically. It coordinates agents but does not
 execute them. The Supervisor is the sole ledger operator and remains the user-facing decision maker.
@@ -75,7 +81,8 @@ consumer repository, an installed profile, or any remote system without separate
 - Python 3.9 or newer
 - Python standard library only
 - Local operation only, with no CI or remote automation added by this repository
-- State schema 5; older schema 2, 3, and 4 runs fail closed and must be restarted
+- State schema 6; schema-5 runs finish under the old engine or restart under schema 6, with no
+  in-place migration or downgrade
 - Every Luna assignment uses `max` reasoning effort. Tech Lead and Architect assignments use
   `gpt-5.6-sol` at every size. Research output contracts require an `evidence_manifest`, verified
   evidence, a null decision, and empty findings.
@@ -91,7 +98,7 @@ Run only the focused acceptance suite below, with bytecode disabled:
 
 ```powershell
 $env:PYTHONDONTWRITEBYTECODE = '1'
-python -m unittest -v tests.test_contracts tests.test_planner tests.test_validator tests.test_state tests.test_cli tests.test_graph_hardening
+python -m unittest -v tests.test_contracts tests.test_planner tests.test_validator tests.test_state tests.test_cli tests.test_graph_hardening tests.test_reviewer_delegation
 ```
 
 After final review, run the local read-only hygiene check separately and last:

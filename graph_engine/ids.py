@@ -4,7 +4,9 @@ import hashlib
 import json
 from typing import Any, Optional
 
-from . import STATE_SCHEMA_VERSION
+
+
+STABLE_ID_DOMAIN_VERSION = 5
 
 
 def canonical_bytes(value: Any) -> bytes:
@@ -30,7 +32,7 @@ def stable_id(
     specialist_tag: Optional[str] = None,
 ) -> str:
     identity = [
-        STATE_SCHEMA_VERSION,
+        STABLE_ID_DOMAIN_VERSION,
         run_id,
         policy_digest,
         entity_type,
@@ -39,4 +41,3 @@ def stable_id(
         specialist_tag or "",
     ]
     return "g2-" + sha256_bytes(canonical_bytes(identity))[:24]
-

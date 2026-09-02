@@ -22,12 +22,15 @@
     "evidence_paths": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
     "inspection_budget": {"type": "object", "additionalProperties": false, "required": ["file_reads", "discovery_commands"], "properties": {"file_reads": {"type": "integer", "minimum": 0}, "discovery_commands": {"type": "integer", "minimum": 0}}},
     "required_check_ids": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
-    "required_human_decisions": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}
+    "required_human_decisions": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+    "reviewer_delegation": {"$ref": "#/$defs/reviewerDelegation"}
   },
   "$defs": {
     "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
     "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "capability": {"type": "object", "additionalProperties": false, "required": ["effect", "action", "target_ref"], "properties": {"effect": {"enum": ["filesystem_read", "filesystem_write", "command", "external_read", "external_write", "destructive", "publish", "deploy"]}, "action": {"$ref": "#/$defs/id"}, "target_ref": {"type": "string", "minLength": 1}}}
+    "capability": {"type": "object", "additionalProperties": false, "required": ["effect", "action", "target_ref"], "properties": {"effect": {"enum": ["filesystem_read", "filesystem_write", "command", "external_read", "external_write", "destructive", "publish", "deploy"]}, "action": {"$ref": "#/$defs/id"}, "target_ref": {"type": "string", "minLength": 1}}},
+    "reviewerDelegationLimits": {"type": "object", "additionalProperties": false, "required": ["max_depth", "max_children_per_request", "max_children_per_run", "max_request_rounds", "max_weighted_dispatch_cost"], "properties": {"max_depth": {"type": "integer", "minimum": 0, "maximum": 1}, "max_children_per_request": {"type": "integer", "minimum": 0, "maximum": 3}, "max_children_per_run": {"type": "integer", "minimum": 0, "maximum": 6}, "max_request_rounds": {"type": "integer", "minimum": 0, "maximum": 2}, "max_weighted_dispatch_cost": {"type": "integer", "minimum": 0, "maximum": 15}}},
+    "taskDelegationAssignment": {"type": "object", "additionalProperties": false, "required": ["assignment_id", "allowed_reason_codes", "allowed_acceptance_ids", "allowed_evidence_kinds", "scope_refs", "max_instances"], "properties": {"assignment_id": {"$ref": "#/$defs/id"}, "allowed_reason_codes": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}, "allowed_acceptance_ids": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}, "allowed_evidence_kinds": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}, "scope_refs": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 1200}}, "max_instances": {"type": "integer", "minimum": 1, "maximum": 3}}},
+    "reviewerDelegation": {"type": "object", "additionalProperties": false, "required": ["limits", "assignments"], "properties": {"limits": {"$ref": "#/$defs/reviewerDelegationLimits"}, "assignments": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/taskDelegationAssignment"}}}}
   }
 }
-

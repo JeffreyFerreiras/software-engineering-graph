@@ -10,13 +10,17 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 from . import STATE_SCHEMA_VERSION
 from .checks import configured_check, validate_check_receipt
 from .contracts import (
-    ContractError, authoritative_task_subset, digest, opaque, safe_json_snapshot,
+    ContractError, authoritative_task_subset, bounded_string, digest, opaque, safe_json_snapshot,
     validate_fanout_assessment, validate_impact_map, validate_result_manifest, validate_task_brief,
 )
 from .config import engine_version_compatible
 from .evidence import reverify_artifact
 from .execution import build_execution_plan, plan_approval_digest
 from .ids import canonical_bytes, sha256_bytes, stable_id
+from .reviewer_delegation import (
+    consolidate_findings, delegated_identity, freeze_terminal_member, request_slot_id, validate_fanout_request,
+    validate_preliminary,
+)
 from .planner import (
     NodeSpec, branch_id, delivery_review_nodes, design_research_nodes, design_review_nodes, envelope, fanout_id,
     initial_route_nodes, revised_design_node, validate_fanout_ordering,
@@ -25,7 +29,7 @@ from .state import StateError, current_host_identity, repository_identity
 
 
 TERMINAL = {"succeeded", "failed", "timed_out", "skipped"}
-BRANCH_STATES = {"pending", "ready", "running"} | TERMINAL
+BRANCH_STATES = {"pending", "ready", "running", "waiting_for_review_children"} | TERMINAL
 RUN_STATES = {"initialized", "active", "blocked", "complete", "aborted"}
 DESIGN_PRECEDENCE = {"APPROVE": 0, "REVISE": 1, "BLOCK": 2}
 DELIVERY_PRECEDENCE = {"accept": 0, "repair": 1, "redesign": 2, "block": 3}
@@ -84,6 +88,7 @@ def _validate_reconstructed_graph(connection: sqlite3.Connection, run: Mapping[s
             expected_nodes.add(branch["branch_id"])
         for key, target in (
             ("successor_branch_ids", expected_nodes),
+            ("child_branch_ids", expected_nodes),
             ("created_join_ids", expected_joins),
             ("created_fanout_ids", expected_fanouts),
         ):
@@ -280,6 +285,236 @@ def _validate_fanouts(
                 raise StateError("FANOUT_DEPENDENCY_STATE_INVALID")
 
 
+def _validate_review_delegation(
+    connection: sqlite3.Connection, run: Mapping[str, Any], *, case_sensitive: bool,
+) -> None:
+    plan_row = connection.execute("SELECT plan_json,plan_digest FROM execution_plans WHERE run_id=?", (run["run_id"],)).fetchone()
+    plan = json.loads(plan_row["plan_json"])
+    assignments = {item["assignment_id"]: item for item in plan.get("conditional_review_assignments", [])}
+    limits = plan.get("reviewer_delegation_limits")
+    requests = connection.execute(
+        "SELECT * FROM review_delegation_requests WHERE run_id=? ORDER BY parent_branch_id,generation,round_number",
+        (run["run_id"],),
+    ).fetchall()
+    if requests and (not assignments or not limits):
+        raise StateError("DELEGATION_DISABLED")
+    total_cost = total_children = 0
+    grouped_rounds: Dict[Tuple[str, int], List[Mapping[str, Any]]] = {}
+    for item in requests:
+        grouped_rounds.setdefault((item["parent_branch_id"], item["generation"]), []).append(item)
+    for group in grouped_rounds.values():
+        rounds = [item["round_number"] for item in group]
+        if rounds != list(range(1, len(group) + 1)) or len(group) > limits["max_request_rounds"]:
+            raise StateError("DELEGATION_ROUND_LIMIT")
+        if any(item["status"] != "sealed" for item in group[:-1]):
+            raise StateError("DELEGATION_ROUND_NOT_SETTLED")
+    for request in requests:
+        expected_slot = request_slot_id(
+            run["run_id"], run["policy_digest"], plan_row["plan_digest"], request["parent_branch_id"],
+            request["parent_attempt_id"], request["parent_claim_digest"], request["generation"], request["round_number"],
+        )
+        if request["request_slot_id"] != expected_slot or request["status"] not in {"awaiting_assessment", "running", "sealed"}:
+            raise StateError("DELEGATION_STATE_INVALID")
+        parent = connection.execute("SELECT * FROM nodes WHERE branch_id=?", (request["parent_branch_id"],)).fetchone()
+        attempt = connection.execute("SELECT * FROM branch_attempts WHERE branch_id=? AND attempt_id=?", (request["parent_branch_id"], request["parent_attempt_id"])).fetchone()
+        if (parent is None or parent["role"] != "code_reviewer" or parent["depth"] != 0
+                or attempt is None or attempt["claim_digest"] != request["parent_claim_digest"]
+                or attempt["outcome"] != "delegated"):
+            raise StateError("DELEGATION_PARENT_STATE_INVALID")
+        preliminary = connection.execute("SELECT * FROM artifacts WHERE ref=?", (request["preliminary_ref"],)).fetchone()
+        request_artifact = connection.execute("SELECT * FROM artifacts WHERE ref=?", (request["request_ref"],)).fetchone()
+        if (preliminary is None or preliminary["kind"] != "delivery_review" or request_artifact is None
+                or not isinstance(request["request_digest"], str) or len(request["request_digest"]) != 64
+                or not isinstance(request["preliminary_digest"], str) or len(request["preliminary_digest"]) != 64
+                or request_artifact["kind"] != "evidence_manifest"):
+            raise StateError("DELEGATION_ARTIFACT_INVALID")
+        try:
+            parent_envelope = json.loads(parent["envelope_json"])
+            preliminary_content = validate_preliminary(
+                json.loads(preliminary["content_json"]), run["run_id"], request["parent_branch_id"],
+                request["parent_attempt_id"], request["generation"], approved_evidence=parent_envelope["inputs"],
+                resolved=True,
+            )
+            request_content = validate_fanout_request(
+                json.loads(request_artifact["content_json"]), run["run_id"], request["parent_branch_id"],
+                request["parent_attempt_id"], request["round_number"], list(assignments.values()),
+                preliminary_content, limits, depth=int(parent["depth"]),
+            )
+        except (ContractError, TypeError, ValueError, json.JSONDecodeError):
+            raise StateError("DELEGATION_ARTIFACT_INVALID")
+        operation_request = {
+            "command": "record.review-fanout", "branch_id": request["parent_branch_id"],
+            "attempt_id": request["parent_attempt_id"], "claim_digest": request["parent_claim_digest"],
+            "preliminary_digest": request["preliminary_digest"], "request_digest": request["request_digest"],
+            "authority_ref": request["authority_ref"],
+        }
+        operation_digest = sha256_bytes(canonical_bytes(operation_request))
+        matching_operations = []
+        for operation in connection.execute(
+            "SELECT * FROM operations WHERE run_id=? AND request_digest=?", (run["run_id"], operation_digest)
+        ):
+            response = json.loads(operation["response_json"])
+            if response.get("request_slot_id") == request["request_slot_id"]:
+                matching_operations.append(operation)
+        if len(matching_operations) != 1:
+            raise StateError("DELEGATION_AUTHORITY_INVALID")
+        members = connection.execute("SELECT * FROM review_delegation_members WHERE request_slot_id=? ORDER BY assignment_id,ordinal", (request["request_slot_id"],)).fetchall()
+        tuples = [[item["child_branch_id"], item["assignment_id"], item["ordinal"]] for item in members]
+        expected_tuples = [
+            [delegated_identity(request["request_slot_id"], item["assignment_id"], item["ordinal"], "branch"),
+             item["assignment_id"], item["ordinal"]]
+            for item in request_content["members"]
+        ]
+        if (tuples != expected_tuples or tuples != json.loads(request["child_member_tuples_json"])
+                or not members or len(members) > limits["max_children_per_request"]):
+            raise StateError("DELEGATION_MEMBER_INVALID")
+        calculated_cost = 0
+        for member in members:
+            assignment = assignments.get(member["assignment_id"])
+            child = connection.execute("SELECT * FROM nodes WHERE branch_id=?", (member["child_branch_id"],)).fetchone()
+            if (assignment is None or child is None or child["request_slot_id"] != request["request_slot_id"]
+                    or child["assignment_id"] != member["assignment_id"] or child["ordinal"] != member["ordinal"]
+                    or child["parent_branch_id"] != request["parent_branch_id"] or child["depth"] != 1):
+                raise StateError("DELEGATION_MEMBER_INVALID")
+            calculated_cost += assignment["dispatch_weight"]
+        if calculated_cost != request["dispatch_cost"]:
+            raise StateError("DELEGATION_COST_INVALID")
+        total_cost += calculated_cost
+        total_children += len(members)
+        fanout = connection.execute("SELECT * FROM review_delegation_fanouts WHERE request_slot_id=?", (request["request_slot_id"],)).fetchone()
+        collection = connection.execute("SELECT * FROM review_delegation_collections WHERE request_slot_id=?", (request["request_slot_id"],)).fetchone()
+        if fanout is None or collection is None:
+            raise StateError("DELEGATION_STATE_INVALID")
+        if request["status"] == "awaiting_assessment" and fanout["status"] != "awaiting":
+            raise StateError("DELEGATION_STATE_INVALID")
+        if request["status"] in {"running", "sealed"} and fanout["status"] != "assessed":
+            raise StateError("DELEGATION_STATE_INVALID")
+        if fanout["status"] == "assessed":
+            assessment = connection.execute("SELECT * FROM artifacts WHERE ref=?", (fanout["assessment_ref"],)).fetchone()
+            if (assessment is None or assessment["kind"] != "evidence_manifest"
+                    or assessment["sha256"] != fanout["assessment_digest"] or not assessment["content_json"]):
+                raise StateError("DELEGATION_ASSESSMENT_INVALID")
+            assessment_content = json.loads(assessment["content_json"])
+            if (set(assessment_content) != {
+                    "schema_version", "kind", "run_id", "fanout_id", "members", "dependencies", "evidence",
+                    "authority_ref", "actor", "host_identity", "assessed_at",
+                } or assessment_content.get("authority_ref") != fanout["authority_ref"]
+                    or assessment_content.get("actor") != fanout["actor"]
+                    or assessment_content.get("host_identity") != fanout["host_identity"]
+                    or fanout["host_identity"] != run["host_identity"]
+                    or assessment_content.get("assessed_at") != fanout["assessed_at"]
+                    or sorted(item.get("branch_id") for item in assessment_content.get("members", []))
+                       != sorted(item["child_branch_id"] for item in members)):
+                raise StateError("DELEGATION_ASSESSMENT_INVALID")
+            base_assessment = {key: assessment_content[key] for key in (
+                "schema_version", "kind", "run_id", "fanout_id", "members", "dependencies", "evidence"
+            )}
+            try:
+                normalized_assessment = validate_fanout_assessment(
+                    base_assessment, run["run_id"], request["request_slot_id"],
+                    [item["child_branch_id"] for item in members],
+                )
+                dependencies = validate_fanout_ordering(
+                    normalized_assessment["members"], normalized_assessment["dependencies"],
+                    case_sensitive=case_sensitive,
+                )
+            except (ContractError, ValueError):
+                raise StateError("DELEGATION_ASSESSMENT_INVALID")
+            normalized_assessment["dependencies"] = dependencies
+            if base_assessment != normalized_assessment:
+                raise StateError("DELEGATION_ASSESSMENT_INVALID")
+            for evidence in normalized_assessment["evidence"]:
+                evidence_artifact = connection.execute(
+                    "SELECT kind,sha256 FROM artifacts WHERE ref=?", (evidence["ref"],)
+                ).fetchone()
+                if evidence_artifact is None or (evidence_artifact["kind"], evidence_artifact["sha256"]) != (
+                    evidence["kind"], evidence["sha256"]
+                ):
+                    raise StateError("DELEGATION_ASSESSMENT_INVALID")
+            if any(
+                item["resources"][key]
+                for item in base_assessment["members"]
+                for key in ("writable_paths", "mutable_state_refs", "exclusive_device_refs")
+            ):
+                raise StateError("DELEGATION_READ_ONLY_REQUIRED")
+            stored_dependencies = [dict(item) for item in connection.execute(
+                "SELECT before_branch_id,after_branch_id,reason FROM review_delegation_dependencies WHERE request_slot_id=? ORDER BY before_branch_id,after_branch_id",
+                (request["request_slot_id"],),
+            )]
+            if dependencies != stored_dependencies:
+                raise StateError("DELEGATION_ASSESSMENT_INVALID")
+            for member in members:
+                child = connection.execute("SELECT * FROM nodes WHERE branch_id=?", (member["child_branch_id"],)).fetchone()
+                predecessors = connection.execute(
+                    """SELECT n.* FROM review_delegation_dependencies d JOIN nodes n ON n.branch_id=d.before_branch_id
+                    WHERE d.request_slot_id=? AND d.after_branch_id=?""",
+                    (request["request_slot_id"], member["child_branch_id"]),
+                ).fetchall()
+                eligible = all(
+                    predecessor["status"] in {"succeeded", "skipped"} or (
+                        predecessor["status"] in {"failed", "timed_out"}
+                        and predecessor["retry_count"] >= predecessor["max_retries"]
+                    ) for predecessor in predecessors
+                )
+                if (eligible and child["status"] == "pending") or (not eligible and child["status"] != "pending"):
+                    raise StateError("DELEGATION_DEPENDENCY_STATE_INVALID")
+        if request["status"] == "sealed":
+            if collection["status"] != "sealed" or not collection["collection_digest"] or not collection["content_json"]:
+                raise StateError("DELEGATION_COLLECTION_INVALID")
+            content = json.loads(collection["content_json"])
+            if content.get("request_slot_id") != request["request_slot_id"] or sha256_bytes(canonical_bytes(content)) != collection["collection_digest"]:
+                raise StateError("DELEGATION_COLLECTION_INVALID")
+            expected_sources: List[Dict[str, Any]] = []
+            if preliminary_content["findings"]:
+                parent_env = json.loads(parent["envelope_json"])
+                expected_sources.append({
+                    "request_slot_id": request["request_slot_id"], "branch_id": parent["branch_id"],
+                    "role": "code_reviewer", "model": parent_env["model"],
+                    "assignment_id": "primary-reviewer", "ordinal": 0,
+                    "review_lens": "preliminary", "findings": preliminary_content["findings"],
+                })
+            expected_members = []
+            for member in members:
+                child = connection.execute("SELECT * FROM nodes WHERE branch_id=?", (member["child_branch_id"],)).fetchone()
+                child_env = json.loads(child["envelope_json"])
+                child_result = json.loads(child["result_json"]) if child["result_json"] else {}
+                findings = child_result.get("findings", []) if child["status"] == "succeeded" else []
+                expected_sources.append({
+                    "request_slot_id": request["request_slot_id"], "branch_id": child["branch_id"],
+                    "role": child["role"], "model": child_env["model"],
+                    "assignment_id": member["assignment_id"], "ordinal": member["ordinal"],
+                    "review_lens": child_env["review_assignment"]["review_lens"], "findings": findings,
+                })
+                result_ref = "ledger:{}#sha256={}".format(child["branch_id"], child["result_digest"])
+                result_artifact = connection.execute(
+                    "SELECT kind,ref,sha256 FROM artifacts WHERE ref=?", (result_ref,),
+                ).fetchone()
+                attempts = connection.execute(
+                    """SELECT attempt_number,attempt_id,claim_digest,started_at,finished_at,outcome
+                    FROM branch_attempts WHERE branch_id=? ORDER BY attempt_number""", (child["branch_id"],),
+                ).fetchall()
+                if result_artifact is None:
+                    raise StateError("DELEGATION_COLLECTION_INVALID")
+                child_with_assignment = dict(child)
+                child_with_assignment.update({"assignment_id": member["assignment_id"], "ordinal": member["ordinal"]})
+                expected_members.append(freeze_terminal_member(
+                    child_with_assignment, child_env, child_result, dict(result_artifact),
+                    [dict(item) for item in attempts],
+                ))
+            expected_content = {
+                "schema_version": 1, "kind": "review_nested_collection", "run_id": run["run_id"],
+                "request_slot_id": request["request_slot_id"], "parent_branch_id": request["parent_branch_id"],
+                "preliminary_findings": preliminary_content["findings"], "members": expected_members,
+                "issues": consolidate_findings(expected_sources),
+            }
+            if content != expected_content:
+                raise StateError("DELEGATION_COLLECTION_INVALID")
+        elif collection["status"] != "open":
+            raise StateError("DELEGATION_COLLECTION_INVALID")
+    if limits and (total_children > limits["max_children_per_run"] or total_cost > limits["max_weighted_dispatch_cost"]):
+        raise StateError("DELEGATION_LIMIT_INVALID")
+
+
 def _validate_attempts(connection: sqlite3.Connection, run: Mapping[str, Any]) -> None:
     started = timestamp_microseconds(run["started_at"])
     finished = timestamp_microseconds(run["finished_at"]) if run["finished_at"] is not None else None
@@ -303,12 +538,15 @@ def _validate_attempts(connection: sqlite3.Connection, run: Mapping[str, Any]) -
             "SELECT * FROM branch_attempts WHERE run_id=? AND branch_id=? ORDER BY attempt_number",
             (run["run_id"], node["branch_id"]),
         ).fetchall()
+        delegated_count = sum(1 for attempt in attempts if attempt["outcome"] == "delegated")
         if node["status"] in {"pending", "skipped"}:
             expected_count = 0
         elif node["status"] == "ready":
-            expected_count = node["retry_count"]
+            expected_count = node["retry_count"] + delegated_count
+        elif node["status"] == "waiting_for_review_children":
+            expected_count = node["retry_count"] + delegated_count
         else:
-            expected_count = node["retry_count"] + 1
+            expected_count = node["retry_count"] + delegated_count + 1
         if len(attempts) != expected_count or [row["attempt_number"] for row in attempts] != list(range(1, len(attempts) + 1)):
             raise StateError("ATTEMPT_HISTORY_INVALID")
         previous_start: Optional[int] = None
@@ -322,9 +560,9 @@ def _validate_attempts(connection: sqlite3.Connection, run: Mapping[str, Any]) -
                 raise StateError("ATTEMPT_TIMESTAMP_INVALID")
             if attempt_finish is not None and attempt_finish < attempt_start:
                 raise StateError("ATTEMPT_TIMESTAMP_INVALID")
-            if attempt_finish is not None and attempt["outcome"] not in {"succeeded", "failed", "timed_out"}:
+            if attempt_finish is not None and attempt["outcome"] not in {"succeeded", "failed", "timed_out", "delegated"}:
                 raise StateError("ATTEMPT_STATE_INVALID")
-            if attempt_finish is not None and index < len(attempts) - 1 and attempt["outcome"] not in {"failed", "timed_out"}:
+            if attempt_finish is not None and index < len(attempts) - 1 and attempt["outcome"] not in {"failed", "timed_out", "delegated"}:
                 raise StateError("ATTEMPT_HISTORY_INVALID")
             if finished is not None and attempt_finish is not None and attempt_finish > finished:
                 raise StateError("ATTEMPT_TIMESTAMP_INVALID")
@@ -340,7 +578,7 @@ def _validate_attempts(connection: sqlite3.Connection, run: Mapping[str, Any]) -
             env = json.loads(node["envelope_json"])
             if node["started_at"] != attempts[0]["started_at"] or env["started_at"] != node["started_at"]:
                 raise StateError("ATTEMPT_TIMESTAMP_INVALID")
-            if node["status"] != "ready" and (
+            if node["status"] not in {"ready", "waiting_for_review_children"} and (
                 env.get("attempt_id") != attempts[-1]["attempt_id"]
                 or env.get("claim_digest") != attempts[-1]["claim_digest"]
             ):
@@ -351,9 +589,9 @@ def _validate_attempts(connection: sqlite3.Connection, run: Mapping[str, Any]) -
             if (not attempts or node["finished_at"] != attempts[-1]["finished_at"]
                     or attempts[-1]["outcome"] != node["status"]):
                 raise StateError("ATTEMPT_TIMESTAMP_INVALID")
-        elif node["status"] == "ready" and attempts and attempts[-1]["outcome"] not in {"failed", "timed_out"}:
+        elif node["status"] == "ready" and attempts and attempts[-1]["outcome"] not in {"failed", "timed_out", "delegated"}:
             raise StateError("ATTEMPT_HISTORY_INVALID")
-        elif node["status"] != "skipped" and node["finished_at"] is not None:
+        elif node["status"] not in {"skipped", "waiting_for_review_children"} and node["finished_at"] is not None:
             raise StateError("ATTEMPT_TIMESTAMP_INVALID")
 
 
@@ -471,7 +709,7 @@ def _group_timing(
 
 
 def compute_timing(connection: sqlite3.Connection, run: Mapping[str, Any]) -> Dict[str, Any]:
-    """Compute deterministic wall-clock metrics from validated schema-5 attempt history."""
+    """Compute deterministic wall-clock metrics from validated schema-6 attempt history."""
     nodes = connection.execute("SELECT * FROM nodes WHERE run_id=? ORDER BY branch_id", (run["run_id"],)).fetchall()
     edges = _semantic_edges(connection, run["run_id"])
     branch_metrics: Dict[str, Dict[str, Any]] = {}
@@ -649,9 +887,94 @@ def _source_finding_dispositions(source_members: Sequence[Mapping[str, Any]]) ->
     return dispositions
 
 
+def _delegated_issue_sources(
+    nested_collections: Sequence[Mapping[str, Any]],
+) -> Dict[str, List[List[str]]]:
+    grouped: Dict[str, List[List[str]]] = {}
+    composite_issues: Dict[Tuple[str, str, str], str] = {}
+    for collection in nested_collections:
+        if collection.get("kind") != "review_nested_collection":
+            raise ContractError("nested_collections", "DELEGATION_COLLECTION_MISMATCH")
+        slot_id = opaque(collection.get("request_slot_id"), "request_slot_id")
+        issues = collection.get("issues")
+        if not isinstance(issues, list):
+            raise ContractError("nested_collections", "DELEGATION_COLLECTION_MISMATCH")
+        for issue in issues:
+            if not isinstance(issue, dict) or not isinstance(issue.get("provenance"), list):
+                raise ContractError("nested_collections", "DELEGATION_COLLECTION_MISMATCH")
+            issue_key = bounded_string(issue.get("issue_key"), "issue_key", 4096)
+            for source in issue["provenance"]:
+                if not isinstance(source, dict):
+                    raise ContractError("nested_collections", "DELEGATION_COLLECTION_MISMATCH")
+                identity = (
+                    slot_id, opaque(source.get("branch_id"), "source_branch_id"),
+                    opaque(source.get("finding_id"), "finding_id"),
+                )
+                previous = composite_issues.get(identity)
+                if previous is not None:
+                    code = "DELEGATION_FINDING_SOURCE_AMBIGUOUS" if previous != issue_key else "DELEGATION_FINDING_SOURCE_DUPLICATE"
+                    raise ContractError("nested_collections", code)
+                composite_issues[identity] = issue_key
+                grouped.setdefault(issue_key, []).append(list(identity))
+    for issue_key, identities in grouped.items():
+        grouped[issue_key] = sorted(identities)
+    return grouped
+
+
+def _delegated_terminal_precedence(
+    nested_collections: Sequence[Mapping[str, Any]],
+) -> int:
+    """Apply the existing mandatory-child floor to exact delegated terminal records."""
+    precedence = 0
+    for collection in nested_collections:
+        members = collection.get("members")
+        if not isinstance(members, list):
+            raise ContractError("nested_collections", "DELEGATION_COLLECTION_MISMATCH")
+        for member in members:
+            if not isinstance(member, dict) or not isinstance(member.get("terminal"), dict):
+                raise ContractError("nested_collections", "DELEGATION_COLLECTION_MISMATCH")
+            status = member.get("status")
+            if status not in {"succeeded", "failed", "timed_out", "skipped"}:
+                raise ContractError("nested_collections", "DELEGATION_COLLECTION_MISMATCH")
+            if status in {"failed", "timed_out"}:
+                precedence = max(precedence, DELIVERY_PRECEDENCE["block"])
+    return precedence
+
+
+def _delivery_outcome_without_delegated_echoes(
+    source_members: Sequence[Mapping[str, Any]], nested_collections: Sequence[Mapping[str, Any]],
+) -> Tuple[str, List[str]]:
+    delegated_ids: Dict[str, Set[str]] = {}
+    for collection in nested_collections:
+        parent_id = opaque(collection.get("parent_branch_id"), "parent_branch_id")
+        for issue in collection.get("issues", []):
+            for source in issue.get("provenance", []):
+                delegated_ids.setdefault(parent_id, set()).add(opaque(source.get("finding_id"), "finding_id"))
+    precedence = 0
+    findings: List[str] = []
+    for member in source_members:
+        if member["status"] != "succeeded":
+            if member["mandatory"]:
+                precedence = max(precedence, 3)
+            continue
+        result = json.loads(member["result_json"])
+        is_delegating_parent = member["branch_id"] in delegated_ids
+        if not is_delegating_parent and result.get("decision") == "BLOCK":
+            precedence = max(precedence, 3)
+        if not is_delegating_parent and result.get("decision") == "REDESIGN_REQUIRED":
+            precedence = max(precedence, 2)
+        for finding in result.get("findings", []):
+            finding_id = finding["finding_id"]
+            findings.append(finding_id)
+            if member["mandatory"] and finding_id not in delegated_ids.get(member["branch_id"], set()):
+                precedence = max(precedence, DELIVERY_PRECEDENCE.get(finding["disposition"], 0))
+    return DELIVERY_OUTCOMES[precedence], sorted(set(findings))
+
+
 def validate_consolidation_manifest(
     manifest: Mapping[str, Any], stage: str, run_id: str, join_id: str, generation: int,
     source_members: Sequence[Mapping[str, Any]],
+    nested_collections: Sequence[Mapping[str, Any]] = (),
 ) -> str:
     expected_kind = stage + "_consolidation"
     if manifest.get("kind") != expected_kind or manifest.get("run_id") != run_id:
@@ -662,16 +985,43 @@ def validate_consolidation_manifest(
     if manifest.get("source_branch_ids") != expected_sources:
         raise ContractError("source_branch_ids", "SOURCE_SET_MISMATCH")
     expected_outcome, expected_findings = (
-        compute_design_outcome(source_members) if stage == "design" else compute_delivery_outcome(source_members)
+        compute_design_outcome(source_members)
+        if stage == "design"
+        else (_delivery_outcome_without_delegated_echoes(source_members, nested_collections)
+              if nested_collections else compute_delivery_outcome(source_members))
     )
     dispositions = manifest.get("finding_dispositions", [])
     actual = {item.get("finding_id"): item.get("disposition") for item in dispositions if isinstance(item, dict)}
     expected = _source_finding_dispositions(source_members)
     if len(actual) != len(dispositions) or actual != expected or sorted(expected) != expected_findings:
         raise ContractError("finding_dispositions", "FINDING_DISPOSITION_MISMATCH")
-    if manifest.get("outcome") != expected_outcome:
+    if not nested_collections:
+        if manifest.get("outcome") != expected_outcome:
+            raise ContractError("outcome", "OUTCOME_PRECEDENCE_MISMATCH")
+        if manifest.get("delegated_finding_dispositions", []):
+            raise ContractError("delegated_finding_dispositions", "DELEGATION_DISPOSITION_MISMATCH")
+        return expected_outcome
+    expected_delegated = _delegated_issue_sources(nested_collections)
+    delegated = manifest.get("delegated_finding_dispositions", [])
+    actual_delegated = {
+        item.get("issue_key"): item for item in delegated if isinstance(item, dict)
+    }
+    if (len(actual_delegated) != len(delegated) or set(actual_delegated) != set(expected_delegated)
+            or any(item.get("source_identities") != expected_delegated[issue]
+                   or item.get("disposition") not in {"accept", "repair", "redesign", "block"}
+                   for issue, item in actual_delegated.items())):
+        raise ContractError("delegated_finding_dispositions", "DELEGATION_DISPOSITION_MISMATCH")
+    expected_precedence = {value: key for key, value in DELIVERY_OUTCOMES.items()}[expected_outcome]
+    delegated_precedence = max(
+        (DELIVERY_PRECEDENCE[item["disposition"]] for item in actual_delegated.values()), default=0,
+    )
+    terminal_precedence = _delegated_terminal_precedence(nested_collections)
+    combined_outcome = DELIVERY_OUTCOMES[max(
+        expected_precedence, delegated_precedence, terminal_precedence,
+    )]
+    if manifest.get("outcome") != combined_outcome:
         raise ContractError("outcome", "OUTCOME_PRECEDENCE_MISMATCH")
-    return expected_outcome
+    return combined_outcome
 
 
 def _validate_budget_state(connection: sqlite3.Connection, run: Mapping[str, Any], task: Mapping[str, Any], policy: Mapping[str, Any]) -> None:
@@ -766,35 +1116,151 @@ def _validate_execution_plan(
     return plan
 
 
+def _validate_review_result_binding(
+    connection: sqlite3.Connection, envelope_value: Mapping[str, Any], result: Mapping[str, Any],
+) -> None:
+    continuation = envelope_value.get("review_continuation")
+    if not continuation:
+        return
+    rows = connection.execute(
+        """SELECT r.request_slot_id,c.collection_digest,c.content_json FROM review_delegation_requests r
+        JOIN review_delegation_collections c USING(request_slot_id)
+        WHERE r.parent_branch_id=? AND r.generation=? AND r.status='sealed' ORDER BY r.round_number""",
+        (envelope_value["branch_id"], envelope_value["generation"]),
+    ).fetchall()
+    slots = [[row["request_slot_id"], row["collection_digest"]] for row in rows]
+    members, terminal, sources, canonical_finding_ids = [], [], [], set()
+    for row in rows:
+        content = json.loads(row["content_json"])
+        for item in content["members"]:
+            members.append([row["request_slot_id"], item["branch_id"], item["assignment_id"], item["ordinal"]])
+            if item["status"] != "succeeded":
+                terminal.append({"request_slot_id": row["request_slot_id"], "branch_id": item["branch_id"],
+                                 "status": item["status"], "reason_code": item["terminal"]["reason_code"],
+                                 "failure_code": item["terminal"]["failure_code"]})
+        for issue in content["issues"]:
+            for source in issue["provenance"]:
+                sources.append([source.get("request_slot_id", row["request_slot_id"]), issue["issue_key"],
+                                source["branch_id"], source["finding_id"],
+                                source["assignment_id"], source["ordinal"]])
+                if source["branch_id"] == issue["canonical_branch_id"]:
+                    canonical_finding_ids.add(source["finding_id"])
+    expected_continuation = {"review_request_slots": slots, "child_members": members,
+                             "terminal_non_successes": terminal, "finding_sources": sorted(sources)}
+    if continuation != expected_continuation or result.get("review_request_slots") != slots or result.get("child_members") != members or result.get("terminal_non_successes") != terminal or result.get("finding_sources") != sorted(sources):
+        raise StateError("DELEGATION_BINDING_INCOMPLETE")
+    source_identities = [(item[0], item[2], item[3]) for item in sources]
+    if len(source_identities) != len(set(source_identities)):
+        raise StateError("DELEGATION_FINDING_SOURCE_AMBIGUOUS")
+    final_finding_ids = {item.get("finding_id") for item in result.get("findings", []) if isinstance(item, dict)}
+    if not canonical_finding_ids.issubset(final_finding_ids):
+        raise StateError("DELEGATION_DISPOSITION_MISSING")
+
+
 def _validate_nodes(connection: sqlite3.Connection, run: Mapping[str, Any], task: Mapping[str, Any], policy: Mapping[str, Any]) -> None:
     execution_plan = json.loads(
         connection.execute("SELECT plan_json FROM execution_plans WHERE run_id=?", (run["run_id"],)).fetchone()[0]
     )
     specialist_by_node = {value["node_key"]: key for key, value in policy["specialists"].items()}
     for node in connection.execute("SELECT * FROM nodes WHERE run_id=?", (run["run_id"],)):
-        template = policy["node_templates"].get(node["node_key"])
-        if template is None or node["role"] != template["role"] or node["stage"] not in template["stages"] or not node["mandatory"]:
-            raise StateError("NODE_BINDING_INVALID")
-        spec = NodeSpec(node["node_key"], node["role"], node["stage"], node["generation"], True, node["specialist_tag"])
-        expected_branch = stable_id(run["run_id"], run["policy_digest"], "branch", spec.key + "@" + spec.stage, spec.generation, spec.specialist_tag)
-        expected_node = stable_id(run["run_id"], run["policy_digest"], "node", spec.key + "@" + spec.stage, spec.generation, spec.specialist_tag)
+        delegated = int(node["depth"]) == 1
+        if delegated:
+            if (node["node_key"] != "delegated_review" or node["stage"] != "review_delegation"
+                    or node["role"] not in {"code_reviewer", "security_reviewer"}
+                    or not node["request_slot_id"] or not node["assignment_id"]
+                    or not isinstance(node["ordinal"], int) or node["ordinal"] < 1
+                    or not node["parent_branch_id"] or node["specialist_tag"] is not None):
+                raise StateError("NODE_BINDING_INVALID")
+            plan_assignment = next((item for item in execution_plan.get("conditional_review_assignments", [])
+                                    if item["assignment_id"] == node["assignment_id"]), None)
+            if plan_assignment is None or plan_assignment["role"] != node["role"]:
+                raise StateError("NODE_BINDING_INVALID")
+            expected_branch = delegated_identity(node["request_slot_id"], node["assignment_id"], node["ordinal"], "branch")
+            expected_node = delegated_identity(node["request_slot_id"], node["assignment_id"], node["ordinal"], "node")
+            template_key = "code_reviewer" if node["role"] == "code_reviewer" else "security_reviewer"
+            template = policy["node_templates"][template_key]
+        else:
+            if int(node["depth"]) != 0 or any(node[key] is not None for key in ("parent_branch_id", "request_slot_id", "assignment_id", "ordinal")):
+                raise StateError("NODE_BINDING_INVALID")
+            template = policy["node_templates"].get(node["node_key"])
+            if template is None or node["role"] != template["role"] or node["stage"] not in template["stages"] or not node["mandatory"]:
+                raise StateError("NODE_BINDING_INVALID")
+            spec = NodeSpec(node["node_key"], node["role"], node["stage"], node["generation"], True, node["specialist_tag"])
+            expected_branch = stable_id(run["run_id"], run["policy_digest"], "branch", spec.key + "@" + spec.stage, spec.generation, spec.specialist_tag)
+            expected_node = stable_id(run["run_id"], run["policy_digest"], "node", spec.key + "@" + spec.stage, spec.generation, spec.specialist_tag)
+            expected_tag = specialist_by_node.get(node["node_key"])
+            if node["specialist_tag"] != expected_tag:
+                raise StateError("NODE_BINDING_INVALID")
         if node["branch_id"] != expected_branch or node["node_instance_id"] != expected_node:
             raise StateError("STABLE_ID_INVALID")
-        expected_tag = specialist_by_node.get(node["node_key"])
-        if node["specialist_tag"] != expected_tag:
-            raise StateError("NODE_BINDING_INVALID")
         if node["status"] not in BRANCH_STATES or not 0 <= node["retry_count"] <= node["max_retries"] or node["max_retries"] != template["max_retries"]:
             raise StateError("BRANCH_STATE_INVALID")
         try:
             stored_envelope = json.loads(node["envelope_json"])
         except json.JSONDecodeError:
             raise StateError("ENVELOPE_INVALID")
-        expected_envelope = envelope(
-            run["run_id"], run["policy_digest"], policy, task, spec, node["status"],
-            stored_envelope.get("inputs", []), node["retry_count"], execution_plan,
-        )
-        for runtime_key in ("attempt_id", "claim_digest", "lease_expires_at"):
-            expected_envelope[runtime_key] = stored_envelope.get(runtime_key)
+        if delegated:
+            required_delegated = {
+                "parent_branch_id", "request_slot_id", "assignment_id", "ordinal", "depth", "review_assignment",
+            }
+            if not required_delegated.issubset(stored_envelope):
+                raise StateError("ENVELOPE_INVALID")
+            request = connection.execute(
+                "SELECT * FROM review_delegation_requests WHERE request_slot_id=?", (node["request_slot_id"],)
+            ).fetchone()
+            member_row = connection.execute(
+                "SELECT * FROM review_delegation_members WHERE request_slot_id=? AND assignment_id=? AND ordinal=?",
+                (node["request_slot_id"], node["assignment_id"], node["ordinal"]),
+            ).fetchone()
+            if request is None or member_row is None or member_row["child_branch_id"] != node["branch_id"]:
+                raise StateError("NODE_BINDING_INVALID")
+            request_artifact = connection.execute("SELECT * FROM artifacts WHERE ref=?", (request["request_ref"],)).fetchone()
+            preliminary_artifact = connection.execute("SELECT * FROM artifacts WHERE ref=?", (request["preliminary_ref"],)).fetchone()
+            if request_artifact is None or preliminary_artifact is None:
+                raise StateError("DELEGATION_REQUEST_INVALID")
+            frozen_request = json.loads(request_artifact["content_json"])
+            preliminary = json.loads(preliminary_artifact["content_json"])
+            frozen_member = next((item for item in frozen_request.get("members", [])
+                                  if item.get("assignment_id") == node["assignment_id"]
+                                  and item.get("ordinal") == node["ordinal"]), None)
+            if frozen_member is None:
+                raise StateError("DELEGATION_REQUEST_INVALID")
+            evidence_by_id = {item["evidence_id"]: item for item in preliminary.get("evidence", [])}
+            try:
+                selected_evidence = [evidence_by_id[item] for item in frozen_member["evidence_ids"]]
+            except KeyError:
+                raise StateError("DELEGATION_REQUEST_INVALID")
+            expected_review_assignment = {
+                "review_lens": plan_assignment["review_lens"],
+                "prompt_template": plan_assignment["prompt_template"],
+                "reason_code": frozen_member["reason_code"],
+                "acceptance_ids": list(frozen_member["acceptance_ids"]),
+                "evidence_ids": list(frozen_member["evidence_ids"]),
+                "evidence": [{"evidence_id": item["evidence_id"], "kind": item["kind"], "sha256": item["sha256"]}
+                             for item in selected_evidence],
+                "scope_refs": list(plan_assignment["scope_refs"]),
+            }
+            if (stored_envelope["parent_branch_id"] != node["parent_branch_id"]
+                    or stored_envelope["request_slot_id"] != node["request_slot_id"]
+                    or stored_envelope["assignment_id"] != node["assignment_id"]
+                    or stored_envelope["ordinal"] != node["ordinal"] or stored_envelope["depth"] != 1
+                    or stored_envelope["model"] != plan_assignment["model"]
+                    or stored_envelope["reasoning_effort"] != plan_assignment["reasoning_effort"]
+                    or stored_envelope["effect_capabilities"] != plan_assignment["effect_capabilities"]
+                    or stored_envelope["output_contract"] != {**template["output_contract"], "artifact_required": False}
+                    or stored_envelope["review_assignment"] != expected_review_assignment
+                    or stored_envelope["inputs"] != []):
+                raise StateError("ENVELOPE_INVALID")
+            expected_envelope = dict(stored_envelope)
+        else:
+            expected_envelope = envelope(
+                run["run_id"], run["policy_digest"], policy, task, spec, node["status"],
+                stored_envelope.get("inputs", []), node["retry_count"], execution_plan,
+            )
+            for runtime_key in ("attempt_id", "claim_digest", "lease_expires_at"):
+                expected_envelope[runtime_key] = stored_envelope.get(runtime_key)
+            if "review_continuation" in stored_envelope:
+                expected_envelope["review_continuation"] = stored_envelope["review_continuation"]
         immutable_keys = {
             "schema_version", "run_id", "branch_id", "node_instance_id", "node_key", "role",
             "model", "reasoning_effort", "mandatory", "generation", "inputs", "effect_capabilities", "output_contract",
@@ -872,15 +1338,19 @@ def _validate_nodes(connection: sqlite3.Connection, run: Mapping[str, Any], task
                     if node["node_key"].startswith("supervisor_"):
                         consolidation_keys = {
                             "schema_version", "kind", "run_id", "join_id", "generation",
-                            "source_branch_ids", "finding_dispositions", "outcome", "attempt_id", "claim_digest",
+                            "source_branch_ids", "finding_dispositions", "delegated_finding_dispositions",
+                            "outcome", "attempt_id", "claim_digest",
                         }
                         validate_result_manifest(
                             {key: result[key] for key in consolidation_keys if key in result}, branch_contract
                         )
                     else:
                         validate_result_manifest(result, branch_contract)
+                        if node["status"] == "succeeded":
+                            _validate_review_result_binding(connection, stored_envelope, result)
                 else:
-                    if result.get("kind") != node["status"].replace("timed_out", "timeout"):
+                    control_kind = {"timed_out": "timeout", "skipped": "skip"}[node["status"]]
+                    if result.get("kind") != control_kind:
                         raise ContractError("result", "CONTROL_RESULT_MISMATCH")
             except ContractError:
                 raise StateError("TERMINAL_RESULT_INVALID")
@@ -1078,6 +1548,8 @@ def _validate_route_and_topology(
             for tag in tags if tag in policy["specialists"]
         )
     for node in nodes:
+        if node["depth"] == 1:
+            continue
         if (node["node_key"], node["stage"]) not in allowed_bindings:
             raise StateError("TOPOLOGY_STATE_INVALID")
         if node["specialist_tag"] is not None and node["specialist_tag"] not in tags:
@@ -1151,6 +1623,8 @@ def _validate_route_and_topology(
     research_generation_set = set(research_generations)
     implementation_generation_set = set(senior_generations)
     for node in nodes:
+        if node["depth"] == 1:
+            continue
         if node["stage"] == "research" and node["generation"] not in research_generation_set:
             raise StateError("GENERATION_STATE_INVALID")
         if node["stage"] == "design" and node["generation"] not in design_generation_set:
@@ -1208,6 +1682,7 @@ def _verify_semantic_state(
     _validate_reconstructed_graph(connection, run)
     _validate_route_and_topology(connection, run, task, policy)
     _validate_fanouts(connection, run, case_sensitive=case_sensitive)
+    _validate_review_delegation(connection, run, case_sensitive=case_sensitive)
     _validate_attempts(connection, run)
     try:
         stored_policy = json.loads(run["policy_json"])

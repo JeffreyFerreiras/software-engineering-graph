@@ -54,6 +54,8 @@ CREATE TABLE nodes (
   mandatory INTEGER NOT NULL, specialist_tag TEXT, status TEXT NOT NULL, retry_count INTEGER NOT NULL,
   max_retries INTEGER NOT NULL, envelope_json TEXT NOT NULL, result_json TEXT, result_digest TEXT,
   failure_code TEXT, reason_code TEXT, started_at TEXT, finished_at TEXT,
+  parent_branch_id TEXT REFERENCES nodes(branch_id), request_slot_id TEXT,
+  assignment_id TEXT, ordinal INTEGER, depth INTEGER NOT NULL DEFAULT 0,
   UNIQUE(run_id,node_key,stage,generation,specialist_tag)
 );
 CREATE TABLE joins (
@@ -142,6 +144,40 @@ CREATE TABLE branch_attempts (
   PRIMARY KEY(branch_id,attempt_number), UNIQUE(run_id,attempt_id),
   CHECK((finished_at IS NULL AND outcome IS NULL) OR (finished_at IS NOT NULL AND outcome IS NOT NULL))
 );
+CREATE TABLE review_delegation_requests (
+  request_slot_id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE RESTRICT,
+  parent_branch_id TEXT NOT NULL REFERENCES nodes(branch_id) ON DELETE RESTRICT,
+  parent_attempt_id TEXT NOT NULL, parent_claim_digest TEXT NOT NULL,
+  generation INTEGER NOT NULL, round_number INTEGER NOT NULL,
+  request_digest TEXT NOT NULL, preliminary_ref TEXT NOT NULL REFERENCES artifacts(ref),
+  preliminary_digest TEXT NOT NULL, request_ref TEXT NOT NULL REFERENCES artifacts(ref),
+  authority_ref TEXT NOT NULL, status TEXT NOT NULL,
+  child_member_tuples_json TEXT NOT NULL, dispatch_cost INTEGER NOT NULL,
+  created_at TEXT NOT NULL, sealed_at TEXT,
+  UNIQUE(parent_branch_id,generation,round_number)
+);
+CREATE TABLE review_delegation_members (
+  request_slot_id TEXT NOT NULL REFERENCES review_delegation_requests(request_slot_id) ON DELETE RESTRICT,
+  assignment_id TEXT NOT NULL, ordinal INTEGER NOT NULL,
+  child_branch_id TEXT NOT NULL UNIQUE REFERENCES nodes(branch_id) ON DELETE RESTRICT,
+  PRIMARY KEY(request_slot_id,assignment_id,ordinal)
+);
+CREATE TABLE review_delegation_fanouts (
+  request_slot_id TEXT PRIMARY KEY REFERENCES review_delegation_requests(request_slot_id) ON DELETE RESTRICT,
+  status TEXT NOT NULL, assessment_ref TEXT REFERENCES artifacts(ref), assessment_digest TEXT,
+  authority_ref TEXT, actor TEXT, host_identity TEXT, assessed_at TEXT
+);
+CREATE TABLE review_delegation_dependencies (
+  request_slot_id TEXT NOT NULL REFERENCES review_delegation_requests(request_slot_id) ON DELETE RESTRICT,
+  before_branch_id TEXT NOT NULL REFERENCES nodes(branch_id) ON DELETE RESTRICT,
+  after_branch_id TEXT NOT NULL REFERENCES nodes(branch_id) ON DELETE RESTRICT,
+  reason TEXT NOT NULL, PRIMARY KEY(request_slot_id,before_branch_id,after_branch_id)
+);
+CREATE TABLE review_delegation_collections (
+  request_slot_id TEXT PRIMARY KEY REFERENCES review_delegation_requests(request_slot_id) ON DELETE RESTRICT,
+  status TEXT NOT NULL, collection_ref TEXT REFERENCES artifacts(ref), collection_digest TEXT,
+  content_json TEXT, sealed_at TEXT
+);
 CREATE TRIGGER fanout_transition_guard BEFORE UPDATE ON fanouts
 BEGIN
   SELECT CASE
@@ -174,6 +210,50 @@ BEGIN
 END;
 CREATE TRIGGER branch_attempt_delete_guard BEFORE DELETE ON branch_attempts
 BEGIN SELECT RAISE(ABORT,'ATTEMPT_IMMUTABLE'); END;
+CREATE TRIGGER review_request_update_guard BEFORE UPDATE ON review_delegation_requests
+BEGIN
+  SELECT CASE WHEN
+    NOT ((OLD.status='awaiting_assessment' AND NEW.status='running' AND NEW.sealed_at IS NULL)
+      OR (OLD.status='running' AND NEW.status='sealed' AND NEW.sealed_at IS NOT NULL))
+    OR OLD.request_slot_id<>NEW.request_slot_id OR OLD.run_id<>NEW.run_id
+    OR OLD.parent_branch_id<>NEW.parent_branch_id OR OLD.parent_attempt_id<>NEW.parent_attempt_id
+    OR OLD.parent_claim_digest<>NEW.parent_claim_digest OR OLD.generation<>NEW.generation
+    OR OLD.round_number<>NEW.round_number OR OLD.request_digest<>NEW.request_digest
+    OR OLD.preliminary_ref<>NEW.preliminary_ref OR OLD.preliminary_digest<>NEW.preliminary_digest
+    OR OLD.request_ref<>NEW.request_ref OR OLD.authority_ref<>NEW.authority_ref
+    OR OLD.child_member_tuples_json<>NEW.child_member_tuples_json
+    OR OLD.dispatch_cost<>NEW.dispatch_cost OR OLD.created_at<>NEW.created_at
+    THEN RAISE(ABORT,'REVIEW_REQUEST_IMMUTABLE') END;
+END;
+CREATE TRIGGER review_request_delete_guard BEFORE DELETE ON review_delegation_requests
+BEGIN SELECT RAISE(ABORT,'REVIEW_REQUEST_IMMUTABLE'); END;
+CREATE TRIGGER review_member_update_guard BEFORE UPDATE ON review_delegation_members
+BEGIN SELECT RAISE(ABORT,'REVIEW_MEMBER_IMMUTABLE'); END;
+CREATE TRIGGER review_member_delete_guard BEFORE DELETE ON review_delegation_members
+BEGIN SELECT RAISE(ABORT,'REVIEW_MEMBER_IMMUTABLE'); END;
+CREATE TRIGGER review_dependency_update_guard BEFORE UPDATE ON review_delegation_dependencies
+BEGIN SELECT RAISE(ABORT,'REVIEW_DEPENDENCY_IMMUTABLE'); END;
+CREATE TRIGGER review_dependency_delete_guard BEFORE DELETE ON review_delegation_dependencies
+BEGIN SELECT RAISE(ABORT,'REVIEW_DEPENDENCY_IMMUTABLE'); END;
+CREATE TRIGGER review_collection_update_guard BEFORE UPDATE ON review_delegation_collections
+BEGIN
+  SELECT CASE WHEN OLD.status<>'open' OR NEW.status<>'sealed'
+    OR OLD.request_slot_id<>NEW.request_slot_id OR NEW.collection_ref IS NULL
+    OR NEW.collection_digest IS NULL OR NEW.content_json IS NULL OR NEW.sealed_at IS NULL
+    THEN RAISE(ABORT,'REVIEW_COLLECTION_IMMUTABLE') END;
+END;
+CREATE TRIGGER review_collection_delete_guard BEFORE DELETE ON review_delegation_collections
+BEGIN SELECT RAISE(ABORT,'REVIEW_COLLECTION_IMMUTABLE'); END;
+CREATE TRIGGER review_fanout_update_guard BEFORE UPDATE ON review_delegation_fanouts
+BEGIN
+  SELECT CASE WHEN OLD.status<>'awaiting' OR NEW.status<>'assessed'
+    OR OLD.request_slot_id<>NEW.request_slot_id OR NEW.assessment_ref IS NULL
+    OR NEW.assessment_digest IS NULL OR NEW.authority_ref IS NULL OR NEW.actor IS NULL
+    OR NEW.host_identity IS NULL OR NEW.assessed_at IS NULL
+    THEN RAISE(ABORT,'REVIEW_FANOUT_IMMUTABLE') END;
+END;
+CREATE TRIGGER review_fanout_delete_guard BEFORE DELETE ON review_delegation_fanouts
+BEGIN SELECT RAISE(ABORT,'REVIEW_FANOUT_IMMUTABLE'); END;
 """
 
 MUTATION_RUN_STATES = {
@@ -189,6 +269,8 @@ MUTATION_RUN_STATES = {
     "record.acceptance-evidence": {"active"},
     "record.check-evidence": {"active"},
     "record.fanout-assessment": {"active"},
+    "record.review-fanout": {"active"},
+    "record.review-fanout-assessment": {"active"},
     "check.run": {"active"},
     "join.advance": {"active"},
     "complete": {"active"},
@@ -839,12 +921,15 @@ class StateStore:
     def _insert_node(connection: sqlite3.Connection, run_id: str, row: Mapping[str, Any]) -> None:
         connection.execute(
             """INSERT INTO nodes(branch_id,run_id,node_instance_id,node_key,role,stage,generation,
-            mandatory,specialist_tag,status,retry_count,max_retries,envelope_json)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            mandatory,specialist_tag,status,retry_count,max_retries,envelope_json,parent_branch_id,
+            request_slot_id,assignment_id,ordinal,depth)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 row["branch_id"], run_id, row["node_instance_id"], row["node_key"], row["role"],
                 row["stage"], row["generation"], int(row["mandatory"]), row.get("specialist_tag"),
                 row["status"], row["retry_count"], row["max_retries"], row["envelope_json"],
+                row.get("parent_branch_id"), row.get("request_slot_id"), row.get("assignment_id"),
+                row.get("ordinal"), row.get("depth", 0),
             ),
         )
 
