@@ -13,6 +13,11 @@ large, select only pertinent roles, assign each possible role a model and reason
 the size, route floor, assignments, and omitted roles to the human. No branch may execute until the
 human explicitly approves that immutable execution plan.
 
+For new repository implementation work, the Supervisor starts in a new isolated Codex worktree before
+inspecting or changing project files. The task brief records the selected worktree and branch as scope
+context. Reuse an existing checkout or worktree only when the user explicitly directs it; still inspect
+its status and protect unrelated changes before delegating.
+
 ## Start a run
 
 1. Inspect the worktree and create a redacted, immutable task brief matching
