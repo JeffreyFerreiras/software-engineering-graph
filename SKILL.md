@@ -7,7 +7,7 @@ description: Orchestrate rigorous software application work through a scope-sele
 
 Use the local control ledger for every new graph run. Treat it as a deterministic coordination and
 recovery aid, not a security boundary or a model-agent executor. Keep the primary agent as Supervisor
-and the sole `graphctl` and ledger CLI mutator and dispatcher. A separately authorized Pull Request
+and the sole `graphctl` and ledger CLI mutator and dispatcher. The execution-plan-authorized Pull Request
 Engineer is the sole bounded Git, GitHub, and worktree mutator for publication and cleanup and never
 operates the ledger. Never give branch agents database paths or operation IDs.
 The first Supervisor step is an execution-plan preflight: T-shirt size the job as small, medium, or
@@ -117,7 +117,9 @@ degraded mode is acceptable. These flags acknowledge platform limitations; they 
   recording an explicit timeout with its current attempt fence. Expired leases appear as a timeout
   action; send `record heartbeat` before expiry when work is still active.
 - Use `complete` only after the closure join, acceptance evidence, approvals, and required checks
-  are satisfied. Use `abort` for rollback; retained databases are audit evidence and are not deleted.
+  are satisfied. For a repository implementation intended for delivery, also require the publication
+  evidence defined below before successful completion. Use `abort` for rollback; retained databases
+  are audit evidence and are not deleted.
 
 `status --json` is the supported export. Treat it as sensitive operational metadata.
 It also reports schema-6 attempt counts and deterministic UTC wall-clock timing. Retry waits count toward
@@ -212,10 +214,14 @@ The execution plan must list the exact model and reasoning effort for every role
 including conditional specialists. Human approval covers that complete assignment matrix. The Impact
 Mapper may narrow the approved role set through route and impact classification, but it may not introduce
 an unapproved role, model, or effort. A retry, replacement, or material route change returns to preflight.
-If Pull Request Engineer publication or cleanup may be dispatched, the human-facing plan must also list
-that operational assignment and its exact external or destructive authority. Human approval is required
-before either dispatch. This instruction-level assignment is not an engine topology or persisted-ledger
-role.
+For every repository implementation intended for delivery, the human-facing plan must list the Pull
+Request Engineer publication assignment and its exact repository, remote, base, head, and permitted
+non-force commit, push, and pull-request authority. The user's authorization for the implementation and
+approval of the initial execution plan authorize those normal publication actions after all required
+gates pass; do not request a separate publication approval or a second approval immediately before push
+or pull-request creation. Cleanup remains conditional and must list its destructive authority before the
+separate cleanup approval and dispatch. These instruction-level assignments are not engine topology or
+persisted-ledger roles.
 
 Then apply these route rules:
 
@@ -328,20 +334,27 @@ Finish only when:
 - unrelated failures are clearly separated and reported;
 - rollout, rollback, and approval requirements are satisfied;
 - the final diff is scoped and explainable.
+- for a repository implementation intended for delivery, exactly one pull request has been created or
+  the exact existing pull request has been updated and verified under the publication contract below.
 
-Have the Supervisor deliver the result, validation evidence, remaining risks, and any required next action.
+After all other gates pass, every repository implementation intended for delivery must complete the
+Pull Request Engineer publication contract below. Do not close the effort successfully until the exact
+pull-request evidence is validated. Have the Supervisor then deliver the result, validation evidence,
+remaining risks, and any required next action.
 The Supervisor owns scope, execution-plan approval, ledger mutation, evidence validation, dispatch, and
 synthesis, but performs no commit, push, pull-request, or worktree mutation. Publishing uses the bounded
 operational contract below; other external actions still require repository permission and explicit
 user authority.
 
-## Optional pull-request publication
+## Required pull-request publication
 
-Use `Pull Request Engineer` as an instruction-level operational role only when the user explicitly
-authorizes pull-request creation or publication. It has no reusable profile TOML, engine node, table,
-or specialist protocol identifier. Dispatch every publication or cleanup attempt in a fresh bounded
-context using exactly `gpt-5.6-luna` with `max` reasoning, and only after the user approves its execution-
-plan assignment and external or destructive authority.
+Use `Pull Request Engineer` as the required instruction-level publication role for every successfully
+completed repository implementation intended for delivery. The user's authorization to perform that
+implementation, followed by approval of the initial execution plan, is sufficient authority for the
+bounded non-force commit, push, and pull-request actions after all required gates pass. Do not ask for a
+separate publication-specific approval or a second approval immediately before those actions. The role
+has no reusable profile TOML, engine node, table, or specialist protocol identifier. Dispatch every
+publication attempt in a fresh bounded context using exactly `gpt-5.6-luna` with `max` reasoning.
 
 Before any publication or cleanup action, require the Pull Request Engineer to inspect only the skill
 catalog exposed to its current session and local skills explicitly declared by applicable repository
@@ -363,9 +376,10 @@ name, safe source or provenance, relevance to the assigned phase, and any discov
 `None` when no skill was selected.
 
 Give the publication dispatch only the reviewed stable diff or commit and exact authorized repository,
-base branch, head branch, and remote. It may create or exactly reuse one scoped commit without changing
-source or tests, push the authorized head without force, and create or verify one pull request. Create a
-draft only when the user explicitly requests a draft; otherwise create a review-ready pull request.
+base branch, head branch, and remote. It must create or exactly reuse one scoped commit without changing
+source or tests, push the authorized head without force, and create exactly one review-ready pull request
+or update and verify the exact existing pull request. A draft is permitted only when the user explicitly
+requests it and is the sole exception to review-ready status.
 
 Before mutation, inspect the dedicated registered worktree, repository and remote identities, base and
 head, reviewed change, secrets risk, and existing pull requests. Exactly two pre-publication worktree

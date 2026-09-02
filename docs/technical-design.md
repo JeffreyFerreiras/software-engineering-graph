@@ -46,13 +46,16 @@ the canonical collection and evidence inputs when creating the same-generation T
 Lead exists before that collection is sealed. If a mandatory research branch exhausts its retry,
 the collection advances to a durable blocked run rather than waiting indefinitely.
 
-### Instruction-level pull-request operations
+### Required instruction-level pull-request publication
 
-`Pull Request Engineer` is an optional operating role, not an engine node, reusable profile, schema,
-table, provider adapter, or specialist identifier. It is eligible only when the user explicitly
-authorizes pull-request creation or publication. The human-facing execution plan must name its exact
-`gpt-5.6-luna` `max` assignment and the permitted external or destructive actions, and the user must
-approve that plan before each fresh publication or cleanup dispatch.
+`Pull Request Engineer` is the required publication role for every successfully completed repository
+implementation intended for delivery, not an engine node, reusable profile, schema, table, provider
+adapter, or specialist identifier. The human-facing execution plan names its exact `gpt-5.6-luna`
+`max` assignment and exact repository, remote, base, head, and permitted non-force commit, push, and
+pull-request actions. The user's implementation authorization and initial execution-plan approval are
+sufficient authority after all required gates pass; publication does not require a separate approval
+or a second approval immediately before push or pull-request creation. Cleanup remains a separately
+approved fresh dispatch because it removes a worktree.
 
 Before acting, each publication or cleanup dispatch inspects only the skill catalog exposed to its
 current session and local skills explicitly declared by applicable repository instructions. It does not
@@ -73,10 +76,11 @@ The Supervisor retains scope, plan, ledger, evidence-validation, dispatch, and s
 performs no Git, GitHub, or worktree mutation. The Senior Engineer remains the sole source and test
 writer and performs no publication operation. A publication dispatch receives only a reviewed stable
 diff or commit and exact repository, remote, base, and head authority. It may create or reuse the one
-scoped commit, push without force, and create or verify one pull request. Draft status requires an
-explicit user request; otherwise the pull request is review-ready. Unrelated or uncommitted ambiguity,
-secrets risk, identity mismatch, duplicate or ambiguous pull requests, force, amend, history rewrite,
-and scope expansion fail closed.
+scoped commit, push without force, and must create exactly one review-ready pull request or update and
+verify the exact existing pull request. An explicitly requested draft is the only exception to review-
+ready status. The delivery effort cannot close successfully before that exact publication evidence is
+validated. Unrelated or uncommitted ambiguity, secrets risk, identity mismatch, duplicate or ambiguous
+pull requests, force, amend, history rewrite, and scope expansion fail closed.
 
 Implementation and publication use a dedicated registered worktree. Pre-publication admits exactly two
 states: clean at the exact reviewed commit; or with the complete staged and unstaged state exactly equal
@@ -241,8 +245,10 @@ current local mode is advisory when no trusted assertion is available.
 ## Contributor contract
 
 Changes must preserve unrelated work, remain within approved files and behavior, add no dependency
-or packaging system, and avoid generated artifacts. Profiles, consumer repositories, remote systems,
-publishing, deployment, and release operations require separately approved scope.
+or packaging system, and avoid generated artifacts. Normal non-force commit, push, and pull-request
+publication for an approved repository implementation follows the required contract above and needs no
+second approval. Profiles, other consumer-repository or remote-system changes, deployment, and release
+operations require separately approved scope.
 
 Only the focused suite below is permitted during implementation:
 

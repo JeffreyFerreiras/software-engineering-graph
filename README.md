@@ -28,9 +28,10 @@ the roles the work needs:
 - **Test Engineer** verifies the acceptance criteria and regression evidence.
 - **Security Reviewer** joins when security, privacy, identity, secrets, or trust boundaries are
   affected.
-- **Pull Request Engineer** is an optional instruction-level operational role. After explicit human
-  approval, a fresh `gpt-5.6-luna` `max` dispatch may publish the reviewed change or later remove its
-  exact approved, clean worktree. It adds no eighth reusable profile or engine node.
+- **Pull Request Engineer** is the required instruction-level publication role for every repository
+  implementation intended for delivery. After all gates pass, a fresh `gpt-5.6-luna` `max` dispatch
+  publishes the reviewed change. A separately approved later dispatch may remove its exact approved,
+  clean worktree. The role adds no eighth reusable profile or engine node.
 
 The workflow is deliberately bounded. It limits design and repair loops, separates writing from
 review, records evidence, and returns unresolved product or risk decisions to the human.
@@ -43,9 +44,9 @@ review, records evidence, and returns unresolved product or risk decisions to th
 4. Design routes first run the assessed architecture/validation research fan-out. The Supervisor
    seals its evidence collection before creating the same-generation Tech Lead branch, then the
    selected agents continue through bounded design, implementation, review, and test handoffs.
-5. The Supervisor closes the run only when the approved criteria and required checks have evidence.
-6. If the user explicitly authorizes publication, the approved plan names the Pull Request Engineer,
-   exact repository/base/head/remote authority, and allowed external actions before dispatch.
+5. After the approved criteria, reviews, and checks pass, the Pull Request Engineer creates exactly one
+   review-ready pull request or updates and verifies the exact existing pull request.
+6. The Supervisor closes the run only after validating that publication evidence.
 
 When both repository policy and task brief opt in, an approved execution-plan v2 can also contain
 conditional review assignments. A primary Code Reviewer may then return a frozen preliminary review
@@ -75,7 +76,8 @@ In a Codex environment where this skill is installed, ask Codex to use
 
 The consumer repository supplies its own `.codex/engineering-graph.json` policy, including the local
 commands that count as required checks. This source repository does not install itself or modify a
-consumer repository, an installed profile, or any remote system without separately approved scope.
+consumer repository, an installed profile, or any remote system outside an approved repository
+implementation scope and the publication contract below.
 
 ## Repository map
 
@@ -93,8 +95,8 @@ consumer repository, an installed profile, or any remote system without separate
 - Python 3.9 or newer
 - Python standard library only
 - Local operation only, with no CI or remote automation added by this repository
-- Pull-request publication is an instruction-level, human-approved agent contract, not an engine-
-  enforced topology or remote provider implementation
+- Pull-request publication is a required instruction-level delivery contract for repository
+  implementation, not an engine-enforced topology or remote provider implementation
 - State schema 6; schema-5 runs finish under the old engine or restart under schema 6, with no
   in-place migration or downgrade
 - Every Luna assignment uses `max` reasoning effort. Tech Lead and Architect assignments use
@@ -109,6 +111,14 @@ content. It receives only the reviewed stable change and exact repository, remot
 authority. It never forces, amends, rewrites history, or creates a duplicate pull request, creates a
 draft only when explicitly requested, and otherwise creates a review-ready pull request. It refuses
 every other uncommitted or unrelated state, secret risk, and identity mismatches.
+
+The user's authorization for repository implementation and approval of its initial execution plan are
+sufficient authority for the normal non-force commit, push, and pull-request actions after every
+required gate passes. The plan names the Pull Request Engineer and exact repository, remote, base, head,
+and action authority. No separate publication-specific approval or second approval immediately before
+push or pull-request creation is required. The effort cannot close successfully until exactly one
+review-ready pull request is created or the exact existing pull request is updated and verified. An
+explicitly requested draft is the only exception to review-ready status.
 
 Before publication or cleanup, the Pull Request Engineer inspects only its exposed session skill
 catalog and local skills explicitly declared by applicable repository instructions; it does not crawl
