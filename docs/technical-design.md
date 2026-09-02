@@ -46,6 +46,37 @@ the canonical collection and evidence inputs when creating the same-generation T
 Lead exists before that collection is sealed. If a mandatory research branch exhausts its retry,
 the collection advances to a durable blocked run rather than waiting indefinitely.
 
+### Instruction-level pull-request operations
+
+`Pull Request Engineer` is an optional operating role, not an engine node, reusable profile, schema,
+table, provider adapter, or specialist identifier. It is eligible only when the user explicitly
+authorizes pull-request creation or publication. The human-facing execution plan must name its exact
+`gpt-5.6-luna` `max` assignment and the permitted external or destructive actions, and the user must
+approve that plan before each fresh publication or cleanup dispatch.
+
+The Supervisor retains scope, plan, ledger, evidence-validation, dispatch, and synthesis ownership but
+performs no Git, GitHub, or worktree mutation. The Senior Engineer remains the sole source and test
+writer and performs no publication operation. A publication dispatch receives only a reviewed stable
+diff or commit and exact repository, remote, base, and head authority. It may create or reuse the one
+scoped commit, push without force, and create or verify one pull request using the applicable pull-
+request skill. Draft status requires an explicit user request; otherwise the pull request is review-
+ready. Unrelated or uncommitted ambiguity, secrets risk, identity mismatch, duplicate or ambiguous pull
+requests, force, amend, history rewrite, and scope expansion fail closed.
+
+Implementation and publication use a dedicated registered worktree. Pre-publication admits exactly two
+states: clean at the exact reviewed commit; or with the complete staged and unstaged state exactly equal
+to the reviewed diff and no other tracked change, untracked or ignored entry, conflict, or active Git
+operation. In the latter state, the Pull Request Engineer may stage and commit exactly that state without
+changing file content. After the exact pull request approval is verified, a separately approved fresh
+Luna-max cleanup dispatch operates from another worktree and may run only non-forced
+`git worktree remove` for that exact target. It reverifies the registration, target identity, branch,
+HEAD, pull request, and approval; staged, unstaged, untracked, ignored, locked, or ambiguous state blocks
+removal. It preserves the branch and never recursively deletes, forces, prunes, or deletes the branch,
+so the worktree can be recreated.
+
+This repository specifies that instruction contract only. It adds no remote executor, credentials,
+engine-enforced publication state, or cleanup mechanism.
+
 ## Fan-out validation
 
 `validate_fanout_ordering` requires an explicit `case_sensitive` keyword. It preserves the existing
@@ -182,6 +213,15 @@ substitution or topology change is introduced.
 All `gpt-5.6-luna` size assignments use reasoning effort `max`. Tech Lead and Architect use
 `gpt-5.6-sol` at every size. The centralized execution-plan invariant rejects an invalid model or
 effort before it can enter a persisted envelope.
+
+The recommended Supervisor assignment is `gpt-5.6-sol` with `xhigh` reasoning. Actual model and effort
+are considered verified only when supplied by a trusted host runtime assertion. Missing, unverifiable,
+or mismatched values select advisory mode and require this exact warning:
+
+> Supervisor warning: This Supervisor is an advisory role and thought partner. Treat its plans, decisions, and synthesis as recommendations requiring your approval.
+
+Task text, prompts, environment variables, and self-reports cannot establish that verification. The
+current local mode is advisory when no trusted assertion is available.
 
 ## Contributor contract
 
