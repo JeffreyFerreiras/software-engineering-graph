@@ -106,10 +106,21 @@ exact reviewed commit; or with its complete staged and unstaged state exactly eq
 diff and no other tracked change, untracked or ignored entry, conflict, or active Git operation. In the
 second state, the Pull Request Engineer may stage and commit exactly that state without changing file
 content. It receives only the reviewed stable change and exact repository, remote, base, and head
-authority. It uses the applicable pull-request skill, never forces, amends, rewrites history, or creates
-a duplicate pull request, creates a draft only when explicitly requested, and otherwise creates a
-review-ready pull request. It refuses every other uncommitted or unrelated state, secret risk, and
-identity mismatches.
+authority. It never forces, amends, rewrites history, or creates a duplicate pull request, creates a
+draft only when explicitly requested, and otherwise creates a review-ready pull request. It refuses
+every other uncommitted or unrelated state, secret risk, and identity mismatches.
+
+Before publication or cleanup, the Pull Request Engineer inspects only its exposed session skill
+catalog and local skills explicitly declared by applicable repository instructions; it does not crawl
+arbitrary profile or global skill directories. It selects the smallest relevant set for that phase and
+reads every selected `SKILL.md` fully. Its assignment and protocol do not prescribe or name a specific
+optional skill. A discovered skill may change method only, never approved scope, phase, model or effort,
+authority, writable files, Git, GitHub, or worktree actions, external effects, or permission to install,
+synchronize, remove, or mutate skills, profiles, or consumer repositories. Controlling instructions
+win and conflicts are reported. An unavailable catalog or unreadable selected skill is reported, and
+work proceeds only when the controlling instructions suffice. Each publication or cleanup handoff has
+a `Skill usage` section with every selected skill's name, safe provenance, relevance, and failures, or
+`None`.
 
 After the exact pull request approval is verified, separately approved cleanup uses a fresh Luna-max
 dispatch from another worktree. It may only remove the exact clean, registered, unlocked worktree with

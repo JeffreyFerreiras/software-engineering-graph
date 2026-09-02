@@ -54,14 +54,29 @@ authorizes pull-request creation or publication. The human-facing execution plan
 `gpt-5.6-luna` `max` assignment and the permitted external or destructive actions, and the user must
 approve that plan before each fresh publication or cleanup dispatch.
 
+Before acting, each publication or cleanup dispatch inspects only the skill catalog exposed to its
+current session and local skills explicitly declared by applicable repository instructions. It does not
+crawl arbitrary profile or global skill directories. The Pull Request Engineer selects the smallest
+clearly relevant set for its assigned phase and reads each selected `SKILL.md` fully. Neither the role
+assignment nor the protocol prescribes or names a specific optional skill.
+
+Discovered skills may alter method only, not approved scope, phase, model or reasoning effort,
+authority, writable files, permitted Git, GitHub, or worktree actions, external effects, or permission
+to install, synchronize, remove, or mutate skills, profiles, or consumer repositories. Controlling
+user, repository, plan, authority, and role instructions take precedence, and conflicts are reported.
+If the catalog is unavailable or a selected skill is unreadable, the dispatch reports the condition
+and proceeds only when the controlling instructions remain sufficient. Its publication or cleanup
+handoff includes `Skill usage` with each selected skill's name, safe provenance, phase relevance, and
+any discovery or read failure, or `None` when no skill was selected.
+
 The Supervisor retains scope, plan, ledger, evidence-validation, dispatch, and synthesis ownership but
 performs no Git, GitHub, or worktree mutation. The Senior Engineer remains the sole source and test
 writer and performs no publication operation. A publication dispatch receives only a reviewed stable
 diff or commit and exact repository, remote, base, and head authority. It may create or reuse the one
-scoped commit, push without force, and create or verify one pull request using the applicable pull-
-request skill. Draft status requires an explicit user request; otherwise the pull request is review-
-ready. Unrelated or uncommitted ambiguity, secrets risk, identity mismatch, duplicate or ambiguous pull
-requests, force, amend, history rewrite, and scope expansion fail closed.
+scoped commit, push without force, and create or verify one pull request. Draft status requires an
+explicit user request; otherwise the pull request is review-ready. Unrelated or uncommitted ambiguity,
+secrets risk, identity mismatch, duplicate or ambiguous pull requests, force, amend, history rewrite,
+and scope expansion fail closed.
 
 Implementation and publication use a dedicated registered worktree. Pre-publication admits exactly two
 states: clean at the exact reviewed commit; or with the complete staged and unstaged state exactly equal
