@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sync Agent Skills"
+  short_description: "Sync profile agent skills and configs"
+  default_prompt: "Use $sync-agent-skills to audit and sync my profile-level agent skills across Codex, Claude, Cursor, and VS Code."

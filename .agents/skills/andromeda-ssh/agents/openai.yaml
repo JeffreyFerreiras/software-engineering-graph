@@ -1,0 +1,4 @@
+interface:
+  display_name: "Andromeda SSH"
+  short_description: "Connect to and safely administer Andromeda"
+  default_prompt: "Use $andromeda-ssh to inspect or administer the Andromeda Linux host over SSH."

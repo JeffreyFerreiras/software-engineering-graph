@@ -1,0 +1,744 @@
+{
+  "version": 2,
+  "name": "code-review-design-graph",
+  "description": "A bounded discovery graph from observable review pressures to SOLID principle hypotheses and candidate design patterns. Matches require confirmation against the code and are never findings by themselves.",
+  "nodes": [
+    {
+      "id": "signal.varying-behavior",
+      "kind": "review-signal",
+      "name": "Varying behavior",
+      "aliases": [
+        "algorithm variation",
+        "conditional behavior",
+        "policy selection"
+      ],
+      "summary": "Multiple interchangeable behaviors are selected by branching or duplicated orchestration.",
+      "cues": [
+        "switch or if chains choose an algorithm or policy",
+        "the same operation has multiple replaceable implementations",
+        "new variants repeatedly modify a central dispatcher"
+      ]
+    },
+    {
+      "id": "signal.state-dependent-behavior",
+      "kind": "review-signal",
+      "name": "State-dependent behavior",
+      "aliases": [
+        "finite state transitions",
+        "mode branching",
+        "status conditionals"
+      ],
+      "summary": "An object's valid behavior changes with explicit state and transition rules.",
+      "cues": [
+        "methods repeat branches on a state or status field",
+        "state transitions and allowed operations are scattered",
+        "adding a state requires editing many unrelated methods"
+      ]
+    },
+    {
+      "id": "signal.creation-policy",
+      "kind": "review-signal",
+      "name": "Creation policy variation",
+      "aliases": [
+        "object creation selection",
+        "constructor branching",
+        "product family creation"
+      ],
+      "summary": "Callers choose concrete types or related object families using repeated construction policy.",
+      "cues": [
+        "callers switch on type before construction",
+        "concrete constructors leak into application policy",
+        "related products must remain compatible as a family"
+      ]
+    },
+    {
+      "id": "signal.complex-construction",
+      "kind": "review-signal",
+      "name": "Complex construction",
+      "aliases": [
+        "telescoping constructor",
+        "staged object assembly",
+        "many optional parameters"
+      ],
+      "summary": "A valid object requires ordered assembly, many optional parts, or cross-field validation.",
+      "cues": [
+        "constructors have many optional or mutually constrained parameters",
+        "callers repeat multi-step assembly in different places",
+        "partially initialized objects can escape"
+      ]
+    },
+    {
+      "id": "signal.incompatible-boundary",
+      "kind": "review-signal",
+      "name": "Incompatible boundary",
+      "aliases": [
+        "third party interface mismatch",
+        "legacy API translation",
+        "external model leakage"
+      ],
+      "summary": "An external or legacy interface does not match the contract expected by local code.",
+      "cues": [
+        "vendor API details leak across many callers",
+        "translation between external and internal models is duplicated",
+        "tests must mock a broad third party surface"
+      ]
+    },
+    {
+      "id": "signal.optional-responsibilities",
+      "kind": "review-signal",
+      "name": "Optional responsibilities",
+      "aliases": [
+        "composable behavior",
+        "feature combinations",
+        "subclass explosion"
+      ],
+      "summary": "Independent optional behaviors must be combined without multiplying subclasses or branches.",
+      "cues": [
+        "subclasses represent every combination of independent features",
+        "wrapping behavior is repeated around the same operation",
+        "features must be enabled per instance at runtime"
+      ]
+    },
+    {
+      "id": "signal.subsystem-coupling",
+      "kind": "review-signal",
+      "name": "Subsystem coupling",
+      "aliases": [
+        "complex subsystem API",
+        "orchestration leakage",
+        "many client dependencies"
+      ],
+      "summary": "Clients coordinate many internal subsystem types to perform a common operation.",
+      "cues": [
+        "many callers repeat the same subsystem call sequence",
+        "clients depend on internal subsystem structure",
+        "a simple use case requires many collaborators"
+      ]
+    },
+    {
+      "id": "signal.part-whole-tree",
+      "kind": "review-signal",
+      "name": "Recursive part-whole structure",
+      "aliases": [
+        "tree hierarchy",
+        "leaf and container",
+        "nested components"
+      ],
+      "summary": "Leaves and containers form a tree and should support the same meaningful operations.",
+      "cues": [
+        "client code branches between leaf and collection types",
+        "nested objects recursively aggregate child results",
+        "tree operations are duplicated across node kinds"
+      ]
+    },
+    {
+      "id": "signal.event-fanout",
+      "kind": "review-signal",
+      "name": "Event fanout",
+      "aliases": [
+        "one to many notification",
+        "subscriber updates",
+        "listener coordination"
+      ],
+      "summary": "One producer must notify a changing set of consumers without owning their concrete behavior.",
+      "cues": [
+        "a producer directly calls several unrelated consumers",
+        "consumers are added or removed independently",
+        "notification wiring is duplicated or tightly coupled"
+      ]
+    },
+    {
+      "id": "signal.request-lifecycle",
+      "kind": "review-signal",
+      "name": "Request lifecycle",
+      "aliases": [
+        "operation as data",
+        "queued action",
+        "undoable request"
+      ],
+      "summary": "Operations need identity so they can be queued, retried, logged, scheduled, or undone.",
+      "cues": [
+        "callbacks carry growing request metadata",
+        "retry or audit logic duplicates operation dispatch",
+        "requests must be stored or composed before execution"
+      ]
+    },
+    {
+      "id": "signal.processing-chain",
+      "kind": "review-signal",
+      "name": "Ordered processing chain",
+      "aliases": [
+        "handler pipeline",
+        "middleware chain",
+        "first matching handler"
+      ],
+      "summary": "A request passes through ordered handlers until one handles it or each contributes processing.",
+      "cues": [
+        "a dispatcher contains an expanding ordered if chain",
+        "handlers must be reordered or composed independently",
+        "middleware repeats forwarding and stop conditions"
+      ]
+    },
+    {
+      "id": "signal.dependency-construction",
+      "kind": "review-signal",
+      "name": "Dependency construction coupling",
+      "aliases": [
+        "hidden dependency creation",
+        "hard wired collaborator",
+        "untestable service construction"
+      ],
+      "summary": "Business behavior constructs concrete collaborators whose lifecycle and implementation belong elsewhere.",
+      "cues": [
+        "methods instantiate network filesystem clock or database clients",
+        "tests require global patching to replace collaborators",
+        "dependency lifecycle is mixed with domain behavior"
+      ]
+    },
+    {
+      "id": "signal.persistence-coupling",
+      "kind": "review-signal",
+      "name": "Persistence coupling",
+      "aliases": [
+        "query leakage",
+        "storage details in domain logic",
+        "duplicated data access"
+      ],
+      "summary": "Use-case or domain code depends directly on storage queries, records, or ORM mechanics.",
+      "cues": [
+        "queries and mapping repeat across application services",
+        "domain decisions depend on ORM or database types",
+        "persistence changes force unrelated business changes"
+      ]
+    },
+    {
+      "id": "principle.single-responsibility",
+      "kind": "principle",
+      "name": "Single Responsibility Principle",
+      "aliases": [
+        "SRP",
+        "single responsibility"
+      ],
+      "summary": "A unit should have one cohesive responsibility and one reason to change.",
+      "cues": [
+        "one unit combines responsibilities that change for distinct stakeholders or policies",
+        "a change to one responsibility repeatedly forces edits or regression risk in another",
+        "unrelated behavior must be coordinated because it is owned by the same unit"
+      ],
+      "guardrails": [
+        "require distinct responsibilities or reasons to change and demonstrate their concrete maintenance or correctness cost",
+        "do not infer a violation from file size method count or number of collaborators alone"
+      ]
+    },
+    {
+      "id": "principle.open-closed",
+      "kind": "principle",
+      "name": "Open/Closed Principle",
+      "aliases": [
+        "OCP",
+        "open closed principle",
+        "open for extension closed for modification"
+      ],
+      "summary": "Stable policy should support demonstrated extensions without repeated invasive modification.",
+      "cues": [
+        "new variants repeatedly require edits to a central branch or stable policy",
+        "the same extension repeatedly modifies several established components",
+        "extension friction is visible in the current diff or repository history"
+      ],
+      "guardrails": [
+        "require demonstrated recurring extension friction and its concrete maintenance or correctness cost",
+        "do not introduce extension points for hypothetical reuse or variants"
+      ]
+    },
+    {
+      "id": "principle.liskov-substitution",
+      "kind": "principle",
+      "name": "Liskov Substitution Principle",
+      "aliases": [
+        "LSP",
+        "Liskov substitution",
+        "behavioral subtyping"
+      ],
+      "summary": "A subtype must preserve the contracts and compatible behavior expected through its base type.",
+      "cues": [
+        "a subtype strengthens preconditions weakens postconditions or breaks a base invariant",
+        "a subtype rejects an operation that the base contract promises",
+        "base-typed callers require subtype checks or special handling to remain correct"
+      ],
+      "guardrails": [
+        "identify the violated base contract invariant or incompatible behavior and demonstrate the resulting cost",
+        "different implementation details performance or internal state alone are not violations"
+      ]
+    },
+    {
+      "id": "principle.interface-segregation",
+      "kind": "principle",
+      "name": "Interface Segregation Principle",
+      "aliases": [
+        "ISP",
+        "interface segregation",
+        "client specific interface"
+      ],
+      "summary": "Consumers should depend only on the operations relevant to their actual needs.",
+      "cues": [
+        "a consumer must depend on members it does not use or cannot meaningfully support",
+        "an implementation throws or supplies dummy behavior for inapplicable interface members",
+        "interface changes repeatedly affect consumers unrelated to the changed capability"
+      ],
+      "guardrails": [
+        "identify an actual consumer burden and demonstrate its maintenance or correctness cost",
+        "a broad interface alone is insufficient without unused inapplicable or change-coupled members"
+      ]
+    },
+    {
+      "id": "principle.dependency-inversion",
+      "kind": "principle",
+      "name": "Dependency Inversion Principle",
+      "aliases": [
+        "DIP",
+        "dependency inversion",
+        "depend on abstractions"
+      ],
+      "summary": "High-level policy should not depend directly on replaceable low-level implementation details.",
+      "cues": [
+        "business policy imports or constructs replaceable database network filesystem or framework details",
+        "changing a low-level implementation forces unrelated high-level policy changes",
+        "testing or substitution requires patching concrete infrastructure inside policy code"
+      ],
+      "guardrails": [
+        "identify high-level policy coupled to a replaceable low-level detail and demonstrate the resulting cost",
+        "do not equate dependency inversion with dependency injection because injection alone does not establish dependency direction"
+      ]
+    },
+    {
+      "id": "pattern.strategy",
+      "kind": "pattern",
+      "name": "Strategy",
+      "aliases": [
+        "policy object",
+        "interchangeable algorithm"
+      ],
+      "summary": "Encapsulate interchangeable behavior behind one contract and let the caller select the policy.",
+      "applicability": [
+        "behavior varies independently from the context that uses it",
+        "new variants otherwise require editing a central conditional"
+      ],
+      "tradeoffs": [
+        "adds contracts and objects that callers must understand",
+        "selection and lifecycle policy still need a clear owner"
+      ],
+      "avoid_when": [
+        "the branch is stable, local, and unlikely to gain variants",
+        "variants do not share a meaningful behavioral contract"
+      ]
+    },
+    {
+      "id": "pattern.state",
+      "kind": "pattern",
+      "name": "State",
+      "aliases": [
+        "state object",
+        "finite state behavior"
+      ],
+      "summary": "Move state-specific behavior and transitions into objects representing valid states.",
+      "applicability": [
+        "the same operations behave differently across explicit states",
+        "transition rules or state branches are scattered across methods"
+      ],
+      "tradeoffs": [
+        "creates more types and makes transition ownership a design decision",
+        "cross-state invariants can become harder to see"
+      ],
+      "avoid_when": [
+        "there are only simple data states with no distinct behavior",
+        "a compact transition table expresses the rules more clearly"
+      ]
+    },
+    {
+      "id": "pattern.factory-method",
+      "kind": "pattern",
+      "name": "Factory Method",
+      "aliases": [
+        "creation method",
+        "object factory"
+      ],
+      "summary": "Centralize selection and creation of one product behind a stable creation operation.",
+      "applicability": [
+        "concrete construction varies while the consuming workflow remains stable",
+        "callers should depend on a product contract instead of constructors"
+      ],
+      "tradeoffs": [
+        "moves rather than removes creation policy",
+        "subclass-based forms can introduce unnecessary inheritance"
+      ],
+      "avoid_when": [
+        "direct construction is already simple and stable",
+        "the factory would only rename a constructor without owning policy"
+      ]
+    },
+    {
+      "id": "pattern.abstract-factory",
+      "kind": "pattern",
+      "name": "Abstract Factory",
+      "aliases": [
+        "product family factory",
+        "related object factory"
+      ],
+      "summary": "Create compatible families of related products through one family-level contract.",
+      "applicability": [
+        "multiple related products must vary together as a compatible family",
+        "clients must remain independent of family-specific concrete types"
+      ],
+      "tradeoffs": [
+        "adding a new product kind changes every factory family",
+        "introduces several contracts and coordinated implementations"
+      ],
+      "avoid_when": [
+        "only one independently varying product is created",
+        "family compatibility is not a real invariant"
+      ]
+    },
+    {
+      "id": "pattern.builder",
+      "kind": "pattern",
+      "name": "Builder",
+      "aliases": [
+        "stepwise construction",
+        "fluent builder"
+      ],
+      "summary": "Separate staged construction from the final representation and enforce valid assembly at completion.",
+      "applicability": [
+        "construction has many optional or ordered steps",
+        "several representations share an assembly process"
+      ],
+      "tradeoffs": [
+        "adds a construction API and often duplicates field names",
+        "validation timing must remain explicit"
+      ],
+      "avoid_when": [
+        "a small constructor or named factory is clearer",
+        "the builder permits invalid combinations instead of preventing them"
+      ]
+    },
+    {
+      "id": "pattern.adapter",
+      "kind": "pattern",
+      "name": "Adapter",
+      "aliases": [
+        "interface translator",
+        "anti-corruption adapter"
+      ],
+      "summary": "Translate an external or legacy interface into the focused contract expected by local code.",
+      "applicability": [
+        "a useful dependency exposes an incompatible interface or model",
+        "translation should be localized at a system boundary"
+      ],
+      "tradeoffs": [
+        "adds mapping code and another failure boundary",
+        "can hide important external semantics if the local contract is too narrow"
+      ],
+      "avoid_when": [
+        "the local interface merely duplicates the external API",
+        "callers genuinely require the full external contract"
+      ]
+    },
+    {
+      "id": "pattern.decorator",
+      "kind": "pattern",
+      "name": "Decorator",
+      "aliases": [
+        "behavior wrapper",
+        "composable wrapper"
+      ],
+      "summary": "Compose optional responsibilities by wrapping the same behavioral contract.",
+      "applicability": [
+        "orthogonal behaviors must be combined per instance",
+        "subclass combinations are multiplying"
+      ],
+      "tradeoffs": [
+        "execution order becomes significant and may be difficult to inspect",
+        "many small wrappers complicate debugging and identity"
+      ],
+      "avoid_when": [
+        "features are not independent or composable",
+        "one explicit orchestration function is easier to follow"
+      ]
+    },
+    {
+      "id": "pattern.facade",
+      "kind": "pattern",
+      "name": "Facade",
+      "aliases": [
+        "subsystem facade",
+        "simplified subsystem API"
+      ],
+      "summary": "Expose a focused entry point for common subsystem workflows while keeping lower-level APIs available when needed.",
+      "applicability": [
+        "many clients repeat the same subsystem orchestration",
+        "internal subsystem structure leaks into ordinary use cases"
+      ],
+      "tradeoffs": [
+        "can become a broad god service if unrelated workflows accumulate",
+        "may obscure capabilities or errors that callers need"
+      ],
+      "avoid_when": [
+        "clients use genuinely different low-level capabilities",
+        "the proposed facade has no cohesive use-case boundary"
+      ]
+    },
+    {
+      "id": "pattern.composite",
+      "kind": "pattern",
+      "name": "Composite",
+      "aliases": [
+        "uniform tree",
+        "leaf composite hierarchy"
+      ],
+      "summary": "Represent leaves and containers through one meaningful contract so clients can operate on a tree uniformly.",
+      "applicability": [
+        "the domain is naturally recursive and part-whole",
+        "leaf and container operations share valid semantics"
+      ],
+      "tradeoffs": [
+        "a common contract may admit operations that do not fit every node",
+        "parent ownership and cycle prevention require care"
+      ],
+      "avoid_when": [
+        "leaf and container behavior is fundamentally different",
+        "uniformity would weaken type safety or domain invariants"
+      ]
+    },
+    {
+      "id": "pattern.observer",
+      "kind": "pattern",
+      "name": "Observer",
+      "aliases": [
+        "publish subscribe",
+        "event listener"
+      ],
+      "summary": "Notify a changing set of subscribers through an event contract without coupling the producer to concrete consumers.",
+      "applicability": [
+        "one event has multiple independently evolving consumers",
+        "subscriber registration or replacement must be dynamic"
+      ],
+      "tradeoffs": [
+        "ordering, failure handling, and delivery semantics become implicit unless defined",
+        "subscriber lifecycle can cause leaks or hidden work"
+      ],
+      "avoid_when": [
+        "the producer requires one explicit mandatory collaborator",
+        "transactional ordering or failure propagation must remain direct"
+      ]
+    },
+    {
+      "id": "pattern.command",
+      "kind": "pattern",
+      "name": "Command",
+      "aliases": [
+        "request object",
+        "operation object"
+      ],
+      "summary": "Represent a request as an object so execution can be queued, retried, logged, composed, or undone.",
+      "applicability": [
+        "operations need identity and lifecycle beyond an immediate call",
+        "dispatch must be separated from execution"
+      ],
+      "tradeoffs": [
+        "adds request types and serialization or versioning concerns",
+        "undo requires explicit compensating state rather than automatic reversal"
+      ],
+      "avoid_when": [
+        "a direct method call already expresses the full lifecycle",
+        "commands would be data-free wrappers with no operational need"
+      ]
+    },
+    {
+      "id": "pattern.chain-of-responsibility",
+      "kind": "pattern",
+      "name": "Chain of Responsibility",
+      "aliases": [
+        "handler chain",
+        "middleware pipeline"
+      ],
+      "summary": "Compose ordered handlers that process or forward a request without a central branch over concrete handlers.",
+      "applicability": [
+        "the handler set or order changes independently",
+        "the first capable handler or an ordered pipeline processes a request"
+      ],
+      "tradeoffs": [
+        "handler order and termination can become hidden behavior",
+        "a request may be silently unhandled without an explicit terminal policy"
+      ],
+      "avoid_when": [
+        "dispatch rules are small, fixed, and clearer as direct branching",
+        "all handlers require tightly coordinated shared state"
+      ]
+    },
+    {
+      "id": "pattern.dependency-injection",
+      "kind": "pattern",
+      "name": "Dependency Injection",
+      "aliases": [
+        "constructor injection",
+        "inversion of control"
+      ],
+      "summary": "Provide required collaborators from a composition boundary instead of constructing them inside business behavior.",
+      "applicability": [
+        "collaborator implementation or lifecycle varies independently",
+        "hidden construction prevents isolated testing or boundary control"
+      ],
+      "tradeoffs": [
+        "moves wiring complexity to a composition root",
+        "excessive injection can expose low cohesion or oversized services"
+      ],
+      "avoid_when": [
+        "the value is an immutable implementation detail with no boundary role",
+        "a service locator would replace explicit dependencies with runtime lookup"
+      ]
+    },
+    {
+      "id": "pattern.repository",
+      "kind": "pattern",
+      "name": "Repository",
+      "aliases": [
+        "persistence collection",
+        "data access repository"
+      ],
+      "summary": "Expose persistence operations in domain or use-case terms while containing storage queries and mapping at a boundary.",
+      "applicability": [
+        "application behavior needs stable aggregate-oriented persistence operations",
+        "storage records or ORM mechanics leak into inward-facing code"
+      ],
+      "tradeoffs": [
+        "generic repositories can erase useful query semantics",
+        "mapping and transaction ownership must remain explicit"
+      ],
+      "avoid_when": [
+        "the repository only mirrors every ORM method",
+        "simple read models are clearer as focused queries"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from": "signal.varying-behavior",
+      "to": "pattern.strategy",
+      "relation": "suggests",
+      "rationale": "Strategy localizes independently varying algorithms or policies behind one behavioral contract."
+    },
+    {
+      "from": "signal.state-dependent-behavior",
+      "to": "pattern.state",
+      "relation": "suggests",
+      "rationale": "State localizes behavior and transitions that currently branch on explicit state."
+    },
+    {
+      "from": "signal.creation-policy",
+      "to": "pattern.factory-method",
+      "relation": "suggests",
+      "rationale": "Factory Method contains selection of one concrete product when creation varies."
+    },
+    {
+      "from": "signal.creation-policy",
+      "to": "pattern.abstract-factory",
+      "relation": "suggests",
+      "rationale": "Abstract Factory fits when several related products vary together as a family."
+    },
+    {
+      "from": "signal.complex-construction",
+      "to": "pattern.builder",
+      "relation": "suggests",
+      "rationale": "Builder can make staged assembly and completion-time validation explicit."
+    },
+    {
+      "from": "signal.incompatible-boundary",
+      "to": "pattern.adapter",
+      "relation": "suggests",
+      "rationale": "Adapter localizes translation between an external interface and the local contract."
+    },
+    {
+      "from": "signal.optional-responsibilities",
+      "to": "pattern.decorator",
+      "relation": "suggests",
+      "rationale": "Decorator composes independent optional behavior without subclass combinations."
+    },
+    {
+      "from": "signal.subsystem-coupling",
+      "to": "pattern.facade",
+      "relation": "suggests",
+      "rationale": "Facade centralizes cohesive, repeated subsystem workflows behind a focused entry point."
+    },
+    {
+      "from": "signal.part-whole-tree",
+      "to": "pattern.composite",
+      "relation": "suggests",
+      "rationale": "Composite provides uniform operations when leaves and containers share valid semantics."
+    },
+    {
+      "from": "signal.event-fanout",
+      "to": "pattern.observer",
+      "relation": "suggests",
+      "rationale": "Observer decouples an event producer from a changing set of consumers."
+    },
+    {
+      "from": "signal.request-lifecycle",
+      "to": "pattern.command",
+      "relation": "suggests",
+      "rationale": "Command gives an operation identity and lifecycle beyond an immediate method call."
+    },
+    {
+      "from": "signal.processing-chain",
+      "to": "pattern.chain-of-responsibility",
+      "relation": "suggests",
+      "rationale": "Chain of Responsibility replaces a central ordered dispatcher with composable handlers."
+    },
+    {
+      "from": "signal.dependency-construction",
+      "to": "pattern.dependency-injection",
+      "relation": "suggests",
+      "rationale": "Dependency Injection moves collaborator choice and lifecycle to a composition boundary."
+    },
+    {
+      "from": "signal.persistence-coupling",
+      "to": "pattern.repository",
+      "relation": "suggests",
+      "rationale": "Repository contains persistence details behind use-case-oriented operations."
+    },
+    {
+      "from": "pattern.strategy",
+      "to": "pattern.state",
+      "relation": "alternative-to",
+      "rationale": "Both move conditional behavior, but Strategy represents caller-selected policy while State represents behavior driven by lifecycle state."
+    },
+    {
+      "from": "pattern.factory-method",
+      "to": "pattern.abstract-factory",
+      "relation": "alternative-to",
+      "rationale": "Use Factory Method for one varying product and Abstract Factory for compatible product families."
+    },
+    {
+      "from": "pattern.factory-method",
+      "to": "pattern.builder",
+      "relation": "complements",
+      "rationale": "A factory may select a builder when both creation policy and staged assembly vary."
+    },
+    {
+      "from": "pattern.command",
+      "to": "pattern.chain-of-responsibility",
+      "relation": "complements",
+      "rationale": "A command can carry a request through a handler chain when both request lifecycle and routing vary."
+    },
+    {
+      "from": "pattern.dependency-injection",
+      "to": "pattern.factory-method",
+      "relation": "complements",
+      "rationale": "A composition root may inject collaborators produced by explicit creation policy."
+    },
+    {
+      "from": "pattern.adapter",
+      "to": "pattern.facade",
+      "relation": "alternative-to",
+      "rationale": "Adapter changes an interface to fit a local contract, while Facade simplifies a cohesive subsystem workflow."
+    }
+  ]
+}

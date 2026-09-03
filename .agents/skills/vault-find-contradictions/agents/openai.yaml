@@ -1,0 +1,4 @@
+interface:
+  display_name: "Find Vault Contradictions"
+  short_description: "Trace dated conflicts and belief changes"
+  default_prompt: "Use $vault-find-contradictions to find dated conflicts in this vault."

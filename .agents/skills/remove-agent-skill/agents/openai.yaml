@@ -1,0 +1,4 @@
+interface:
+  display_name: "Remove Agent Skill"
+  short_description: "Remove a skill from all agent tools"
+  default_prompt: "Use $remove-agent-skill to remove a named skill from Codex, Claude, Cursor, VS Code, and the skills repo."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Software Engineering Graph"
+  short_description: "Canonical graph skill lives in its own repository"
+  default_prompt: "Use $software-engineering-graph to locate the canonical graph skill and follow it for this application change."

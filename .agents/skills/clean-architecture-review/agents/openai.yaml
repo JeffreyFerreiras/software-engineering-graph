@@ -1,0 +1,4 @@
+interface:
+  display_name: "Clean Architecture Review"
+  short_description: "Review code for architecture drift"
+  default_prompt: "Use $clean-architecture-review to review this change for Clean Architecture violations."

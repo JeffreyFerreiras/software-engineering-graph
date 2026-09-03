@@ -1,0 +1,4 @@
+interface:
+  display_name: "Vault Daily Review"
+  short_description: "Create an evidence-backed daily review"
+  default_prompt: "Use $vault-daily-review to create the evidence-backed daily vault review."

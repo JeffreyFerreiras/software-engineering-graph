@@ -1,0 +1,4 @@
+interface:
+  display_name: "Clean Code"
+  short_description: "Write and refactor pragmatic clean code"
+  default_prompt: "Use $clean-code to improve this code while preserving behavior and local conventions."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skill Doctor"
+  short_description: "Validate and audit a skills repository"
+  default_prompt: "Use $skill-doctor to validate this skills repository and report actionable issues."

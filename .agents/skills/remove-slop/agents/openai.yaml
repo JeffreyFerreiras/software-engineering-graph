@@ -1,0 +1,4 @@
+interface:
+  display_name: "Remove Slop"
+  short_description: "Clean AI artifacts without behavior changes"
+  default_prompt: "Use $remove-slop to clean the current diff while preserving behavior and validating the affected files."

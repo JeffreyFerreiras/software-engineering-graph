@@ -1,0 +1,4 @@
+interface:
+  display_name: "LeetCode"
+  short_description: "Solve and review coding interview problems"
+  default_prompt: "Use $leetcode to solve this coding interview problem with clear reasoning and code."
