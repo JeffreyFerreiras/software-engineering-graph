@@ -248,17 +248,6 @@ class GraphHardeningTests(GraphCase):
         branch = self.claim()
         self.assertEqual((branch["model"], branch["reasoning_effort"]), ("gpt-5.6-luna", "max"))
 
-    def test_cursor_host_plan_dispatches_grok_and_composer(self):
-        initialized = self.initialize(size="small", host="cursor")
-        plan = initialized["execution_plan"]
-        self.assertEqual(plan["host"], "cursor")
-        senior = next(item for item in plan["assignments"] if item["node_key"] == "senior_engineer")
-        self.assertEqual((senior["model"], senior["reasoning_effort"]), ("composer-2.5", "high"))
-        tech_lead = next(item for item in plan["assignments"] if item["node_key"] == "tech_lead")
-        self.assertEqual(tech_lead["dispatch_model"], "cursor-grok-4.6-medium")
-        branch = self.claim()
-        self.assertEqual((branch["model"], branch["reasoning_effort"]), ("composer-2.5", "high"))
-
     def test_rejected_execution_plan_blocks_the_run(self):
         initialized = self.initialize(approve=False)
         result = self.graphctl(

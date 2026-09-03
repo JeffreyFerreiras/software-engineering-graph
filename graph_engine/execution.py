@@ -3,7 +3,8 @@
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 from .hosts import (
-    DEFAULT_HOST, catalog_for, dispatch_model, resolve_assignment,
+    DEFAULT_HOST, classify, dispatch_model, economy_effort, publication_assignment,
+    resolve_assignment, supervisor_recommendation,
 )
 from .ids import canonical_bytes, sha256_bytes
 from .reviewer_delegation import plan_fragment
@@ -117,13 +118,12 @@ def validate_model_assignment(
     node_key: str, model: str, reasoning_effort: str, host: str = DEFAULT_HOST,
 ) -> None:
     """Fail closed on the graph's model and reasoning-effort invariants."""
-    catalog = catalog_for(host)
-    intelligence_class = catalog.classify(model)
+    intelligence_class = classify(host, model)
     if intelligence_class is None:
         raise ValueError("MODEL_ASSIGNMENT_INVALID")
     if intelligence_class == "primary-thread" and reasoning_effort != "inherited":
         raise ValueError("SUPERVISOR_EFFORT_INVALID")
-    if intelligence_class == "economy" and reasoning_effort != catalog.economy_effort:
+    if intelligence_class == "economy" and reasoning_effort != economy_effort(host):
         raise ValueError("ECONOMY_REASONING_EFFORT_REQUIRED")
     if node_key in {"tech_lead", "architect"} and intelligence_class != "reasoning":
         raise ValueError("DESIGN_MODEL_REQUIRED")
@@ -143,7 +143,6 @@ def build_execution_plan(
     run_id: str, task: Mapping[str, Any], requested_size: Optional[str] = None,
     host: str = DEFAULT_HOST,
 ) -> Dict[str, Any]:
-    catalog = catalog_for(host)
     recommended, recommendation_reason = recommend_size(task)
     size = requested_size or recommended
     if size not in TSHIRT_SIZES:
@@ -164,8 +163,8 @@ def build_execution_plan(
             "dispatch_when": DISPATCH_WHEN[node_key],
         })
     delegation = task.get("reviewer_delegation")
-    supervisor_model, supervisor_effort = catalog.supervisor_recommendation
-    publication_model, publication_effort = catalog.publication
+    supervisor_model, supervisor_effort, supervisor_dispatch = supervisor_recommendation(host)
+    publication_model, publication_effort, publication_dispatch = publication_assignment(host)
     plan = {
         "schema_version": 2 if delegation is not None else 1,
         "run_id": run_id,
@@ -180,12 +179,12 @@ def build_execution_plan(
         "supervisor_recommendation": {
             "model": supervisor_model,
             "reasoning_effort": supervisor_effort,
-            "dispatch_model": dispatch_model(host, supervisor_model, supervisor_effort),
+            "dispatch_model": supervisor_dispatch,
         },
         "publication_assignment": {
             "model": publication_model,
             "reasoning_effort": publication_effort,
-            "dispatch_model": dispatch_model(host, publication_model, publication_effort),
+            "dispatch_model": publication_dispatch,
         },
         "assignments": assignments,
         "approval_id": "execution_plan",

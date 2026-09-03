@@ -32,20 +32,20 @@ side effects at the outer boundary.
 
 ### Host model catalogs
 
-Role intelligence is a host-agnostic class, not a vendor model ID. The size matrix assigns
-`economy`, `reasoning`, or `primary-thread`. `graph_engine/hosts.py` maps those classes onto the
-selected runtime:
+Role intelligence is a host-agnostic class plus requested effort, not a vendor model ID.
+`graph_engine/hosts.py` expands `(class, effort)` through `HOST_MATRIX`:
 
-| Class | Purpose | Codex | Cursor |
+| Class | Requested effort | Codex (test/default) | Cursor runtime |
 | --- | --- | --- | --- |
-| `economy` | mapping, research, mechanical implementation, publication | `gpt-5.6-luna` `max` | `composer-2.5` `high` |
-| `reasoning` | design, architecture, independent review | `gpt-5.6-sol` | `cursor-grok-4.6` |
-| `primary-thread` | Supervisor consolidation | inherited | inherited |
+| `economy` | `max` | `gpt-5.6-luna` `max` | `composer-2.5` `high` |
+| `reasoning` | `medium` / `high` / `xhigh` / `max` | `gpt-5.6-sol` at that effort | `cursor-grok-4.6` at medium/high/xhigh |
+| `primary-thread` | `inherited` | inherited | inherited |
 
-Cursor reasoning dispatch uses `cursor-grok-4.6-<effort>` rather than ChatGPT Sol. The execution
-plan records `host`, resolved `model`/`reasoning_effort`, and `dispatch_model`. Human approval covers
-the mapped vendor IDs. Codex remains the default host; `--host cursor` is an explicit plan choice.
-Host detection does not use environment variables or agent self-reports.
+Tests and default runs use the Codex catalog. Cursor can dispatch those same Codex model IDs, so
+Codex-config assertions are valid on both hosts. `--host cursor` is the cheaper runtime mapping.
+The execution plan records `host`, `intelligence_class`, resolved `model`/`reasoning_effort`, and
+`dispatch_model`. Human approval covers the mapped vendor IDs. Host detection does not use
+environment variables or agent self-reports.
 
 ### Pre-design research gate
 
