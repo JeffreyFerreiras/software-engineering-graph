@@ -1,6 +1,6 @@
 # Software Engineering Graph
 
-Software Engineering Graph is an **AI-agent skill for Codex**. It organizes complex software work
+Software Engineering Graph is an **AI-agent skill** for Codex, Cursor, and equivalent agent hosts. It organizes complex software work
 across specialized AI agents and makes scope, human approval, design, implementation, independent
 review, and testing explicit.
 
@@ -13,7 +13,7 @@ The installed profile remains untouched unless separately approved work explicit
 
 ## What the skill does
 
-The skill keeps the primary Codex agent in charge as the **Supervisor**. The Supervisor scopes the
+The skill keeps the primary host agent in charge as the **Supervisor**. The Supervisor scopes the
 request, proposes an execution plan, asks the human to approve that plan, and then coordinates only
 the roles the work needs:
 
@@ -29,7 +29,7 @@ the roles the work needs:
 - **Security Reviewer** joins when security, privacy, identity, secrets, or trust boundaries are
   affected.
 - **Pull Request Engineer** is the required instruction-level publication role for every repository
-  implementation intended for delivery. A fresh `gpt-5.6-luna` `max` dispatch publishes after the gates
+  implementation intended for delivery. A fresh host-catalog publication dispatch publishes after the gates
   and may later perform separately approved cleanup. It adds no eighth profile or engine node.
 
 The workflow is deliberately bounded. It limits design and repair loops, separates writing from
@@ -59,14 +59,16 @@ execute them. The Supervisor is the sole ledger operator and remains the user-fa
 It validates publication evidence but never commits, pushes, creates a pull request, or removes a
 worktree. The Senior Engineer remains the sole source and test writer and never publishes.
 
-The Supervisor preflight recommends `gpt-5.6-sol` with `xhigh` reasoning. Unless a trusted host runtime
+The Supervisor preflight names a host catalog (`codex` or `cursor`) and recommends that catalog's
+Supervisor assignment. Codex defaults to `gpt-5.6-sol` with `xhigh` reasoning. Cursor defaults to
+`cursor-grok-4.6` with `high` reasoning instead of ChatGPT Sol. Unless a trusted host runtime
 assertion verifies that exact actual assignment, the Supervisor operates in advisory mode and displays:
 
 > Supervisor warning: This Supervisor is an advisory role and thought partner. Treat its plans, decisions, and synthesis as recommendations requiring your approval.
 
 ## Using the skill
 
-In a Codex environment where this skill is installed, ask Codex to use
+In a Codex or Cursor environment where this skill is installed, ask the host agent to use
 `software-engineering-graph` for the task. For example:
 
 > Use the software-engineering-graph skill for this feature. Before any specialist agents start,
@@ -81,8 +83,10 @@ implementation scope and the publication contract below.
 ## Repository map
 
 - [`SKILL.md`](SKILL.md) defines the AI skill and its operating contract.
-- [`profile-agents/`](profile-agents/) contains the seven reusable Codex role profiles.
+- [`profile-agents/`](profile-agents/) contains the seven reusable Codex role profiles. Cursor runs
+  keep those files unchanged and resolve models through the host catalog instead.
 - [`graph_engine/`](graph_engine/) implements deterministic planning, validation, and local state.
+  Host catalogs in `graph_engine/hosts.py` map role intelligence classes onto Codex or Cursor models.
 - [`scripts/graphctl.py`](scripts/graphctl.py) is the command-line adapter used by the Supervisor.
 - [`references/`](references/) contains schemas and workflow contracts.
 - [`docs/technical-design.md`](docs/technical-design.md) explains the internal architecture and
@@ -98,9 +102,9 @@ implementation scope and the publication contract below.
   implementation, not an engine-enforced topology or remote provider implementation
 - State schema 6; schema-5 runs finish under the old engine or restart under schema 6, with no
   in-place migration or downgrade
-- Every Luna assignment uses `max` reasoning effort. Tech Lead and Architect assignments use
-  `gpt-5.6-sol` at every size. Research output contracts require an `evidence_manifest`, verified
-  evidence, a null decision, and empty findings.
+- Every economy (Codex Luna / Cursor Composer) size assignment uses that catalog's economy effort.
+  Tech Lead and Architect assignments use the host reasoning model at every size. Research output
+  contracts require an `evidence_manifest`, verified evidence, a null decision, and empty findings.
 
 Implementation authorization and initial plan approval cover the plan's exact non-force commit, push,
 and PR actions after all gates; no later publication approval is needed. The Supervisor and Senior

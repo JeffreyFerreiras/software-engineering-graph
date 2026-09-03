@@ -1,7 +1,10 @@
 from pathlib import Path
 
 from graph_engine.config import load_policy
-from graph_engine.execution import SIZE_ASSIGNMENTS, build_execution_plan, validate_model_assignment
+from graph_engine.execution import (
+    CLASS_ASSIGNMENTS, SIZE_ASSIGNMENTS, build_execution_plan, validate_model_assignment,
+)
+from graph_engine.hosts import DEFAULT_HOST, dispatch_weight_for, known_hosts, resolve_assignment
 from graph_engine.ids import stable_id
 from graph_engine.planner import (
     NodeSpec, design_research_nodes, design_review_nodes, envelope, initial_route_nodes,
@@ -61,16 +64,16 @@ class PlannerTests(GraphCase):
     def test_size_assignment_matrix_is_exact(self):
         self.assertEqual(SIZE_ASSIGNMENTS, EXPECTED_SIZE_ASSIGNMENTS)
 
-    def test_impact_mapper_always_uses_luna_with_max_reasoning(self):
+    def test_impact_mapper_always_uses_economy_class(self):
         assignments = {
-            size: roles["impact_mapper"] for size, roles in SIZE_ASSIGNMENTS.items()
+            size: roles["impact_mapper"] for size, roles in CLASS_ASSIGNMENTS.items()
         }
         self.assertEqual(
             assignments,
             {
-                "small": ("gpt-5.6-luna", "max"),
-                "medium": ("gpt-5.6-luna", "max"),
-                "large": ("gpt-5.6-luna", "max"),
+                "small": ("economy", "max"),
+                "medium": ("economy", "max"),
+                "large": ("economy", "max"),
             },
         )
 
@@ -81,6 +84,26 @@ class PlannerTests(GraphCase):
                     self.assertEqual(effort, "max", (size, role))
             self.assertEqual(assignments["tech_lead"][0], "gpt-5.6-sol")
             self.assertEqual(assignments["architect"][0], "gpt-5.6-sol")
+
+    def test_codex_is_the_default_test_host(self):
+        plan = build_execution_plan("RUN-1", self.task(), "medium")
+        explicit = build_execution_plan("RUN-1", self.task(), "medium", host="codex")
+        self.assertEqual(plan, explicit)
+        self.assertEqual(plan["host"], DEFAULT_HOST)
+        by_key = {item["node_key"]: item for item in plan["assignments"]}
+        self.assertEqual(by_key["tech_lead"]["model"], "gpt-5.6-sol")
+        self.assertEqual(by_key["tech_lead"]["dispatch_model"], "gpt-5.6-sol")
+        self.assertEqual(by_key["impact_mapper"]["model"], "gpt-5.6-luna")
+        self.assertEqual(plan["supervisor_recommendation"]["model"], "gpt-5.6-sol")
+        self.assertEqual(plan["publication_assignment"]["model"], "gpt-5.6-luna")
+
+    def test_every_host_can_expand_the_class_matrix(self):
+        for host in known_hosts():
+            for size, roles in CLASS_ASSIGNMENTS.items():
+                for role, (intelligence_class, effort) in roles.items():
+                    model, resolved = resolve_assignment(host, intelligence_class, effort)
+                    self.assertTrue(model, (host, size, role))
+                    self.assertTrue(resolved, (host, size, role))
 
     def test_execution_plan_prefers_node_assignment_then_role_fallback(self):
         for size in SIZE_ASSIGNMENTS:
@@ -157,10 +180,17 @@ class PlannerTests(GraphCase):
             )
 
     def test_model_assignment_invariant_fails_closed(self):
-        with self.assertRaisesRegex(ValueError, "LUNA_REASONING_EFFORT_REQUIRED"):
+        with self.assertRaisesRegex(ValueError, "ECONOMY_REASONING_EFFORT_REQUIRED"):
             validate_model_assignment("impact_mapper", "gpt-5.6-luna", "high")
         with self.assertRaisesRegex(ValueError, "DESIGN_MODEL_REQUIRED"):
             validate_model_assignment("tech_lead", "gpt-5.6-luna", "max")
+        with self.assertRaisesRegex(ValueError, "HOST_UNSUPPORTED"):
+            validate_model_assignment("tech_lead", "gpt-5.6-sol", "medium", host="unknown")
+        self.assertEqual(dispatch_weight_for("gpt-5.6-luna", "max"), 3)
+        self.assertEqual(dispatch_weight_for("gpt-5.6-sol", "high"), 3)
+        self.assertEqual(dispatch_weight_for("gpt-5.6-sol", "xhigh"), 4)
+        self.assertEqual(dispatch_weight_for("gpt-5.6-sol", "max"), 5)
+        self.assertIsNone(dispatch_weight_for("gpt-5.6-luna", "high"))
 
     def test_multiple_specialists_are_canonical_and_mandatory(self):
         policy, _ = load_policy(self.repo)

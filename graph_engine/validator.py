@@ -16,6 +16,7 @@ from .contracts import (
 from .config import engine_version_compatible
 from .evidence import reverify_artifact
 from .execution import build_execution_plan, plan_approval_digest
+from .hosts import DEFAULT_HOST
 from .ids import canonical_bytes, sha256_bytes, stable_id
 from .reviewer_delegation import (
     consolidate_findings, delegated_identity, freeze_terminal_member, request_slot_id, validate_fanout_request,
@@ -1087,7 +1088,9 @@ def _validate_execution_plan(
         raise StateError("EXECUTION_PLAN_STATE_INVALID")
     try:
         requested_size = row["size"] if plan.get("size_source") == "supervisor_override" else None
-        expected = build_execution_plan(run["run_id"], task, requested_size)
+        expected = build_execution_plan(
+            run["run_id"], task, requested_size, host=plan.get("host", DEFAULT_HOST),
+        )
         plan_digest = digest(row["plan_digest"], "execution_plan.plan_digest")
     except (ContractError, ValueError):
         raise StateError("EXECUTION_PLAN_STATE_INVALID")

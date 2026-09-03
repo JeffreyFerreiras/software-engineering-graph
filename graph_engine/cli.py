@@ -23,6 +23,7 @@ from .evidence import (
     resolve_reference, resolve_unhashed_reference,
 )
 from .execution import build_execution_plan, plan_approval_digest
+from .hosts import DEFAULT_HOST, known_hosts
 from .ids import canonical_bytes, sha256_bytes
 from .reviewer_delegation import (
     consolidate_findings, delegated_identity, freeze_terminal_member, request_slot_id, validate_fanout_request,
@@ -569,7 +570,7 @@ def command_init(args: argparse.Namespace, repo: Path, policy: Mapping[str, Any]
     )
     full_task = validate_task_brief(task_snapshot.parsed, policy_snapshot.digest, policy)
     task = authoritative_task_subset(full_task)
-    execution_plan = build_execution_plan(run_id, task, args.size)
+    execution_plan = build_execution_plan(run_id, task, args.size, host=getattr(args, "host", DEFAULT_HOST))
     skill_root = Path(__file__).resolve().parents[1]
     verified_evidence = [
         resolve_unhashed_reference(ref, "acceptance_evidence", repo, skill_root, policy)
@@ -2169,6 +2170,7 @@ def build_parser() -> argparse.ArgumentParser:
     init = commands.add_parser("init")
     init.add_argument("--run-id", required=True); init.add_argument("--task-brief", required=True); init.add_argument("--op-id", required=True)
     init.add_argument("--size", choices=["small", "medium", "large"])
+    init.add_argument("--host", choices=known_hosts(), default=DEFAULT_HOST)
     init.add_argument("--ack-degraded-permissions", action="store_true", default=argparse.SUPPRESS)
     init.add_argument("--ack-degraded-durability", action="store_true", default=argparse.SUPPRESS)
     record = commands.add_parser("record")
