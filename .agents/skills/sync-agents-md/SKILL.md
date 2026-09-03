@@ -13,12 +13,20 @@ Prefer inventory and comparison before editing. Use the most recently edited rel
 
 Ensure that updates are applied to all installed AI agent tools, including Claude, Cursor, Codex, and Copilot/VS Code prompts, while respecting each tool's discovery model and file format.
 
+## Master Repository (`ai-skills`)
+
+The master canonical copy for portable agent instructions (`AGENTS.md`) is maintained in the `ai-skills` git repository:
+- Git URL: `https://github.com/JeffreyFerreiras/ai-skills.git`
+- Master instruction file: `AGENTS.md` in the repository root.
+
+When updating agent instructions across local repositories or profile-level tools, treat `ai-skills/AGENTS.md` as the authoritative master copy unless the user specifies a different source.
+
 ## Source Model
 
 - The user's explicit source or target always wins.
-- When the user does not name a source, inventory candidate `AGENTS.md` files and treat the last edited file as the priority source.
-- Compare candidates by topic before writing. If the newest file is clearly partial, stale, generated, or tool-specific, report that risk before using another source.
-- By default, synchronize the priority `AGENTS.md` to profile-level Claude, Cursor, and Codex instruction locations.
+- By default, treat the `AGENTS.md` from the master repository (`https://github.com/JeffreyFerreiras/ai-skills.git`) as the canonical source.
+- When syncing a local project repository or personal profiles, synchronize guidance from `ai-skills/AGENTS.md` while preserving project-specific instructions (such as build commands, test steps, or local architecture notes) in repository-level files.
+- Compare candidate files before writing. If local files contain unique project facts, preserve or merge them rather than obliterating project-specific context.
 - Copy the canonical content directly when the target supports markdown instructions; transform only when a tool requires a different wrapper or filename.
 
 ## Profile Sync Targets
@@ -33,14 +41,16 @@ Create missing parent directories when the target path is clear. Back up existin
 
 ## Workflow
 
-1. Locate candidate instruction files before editing, latest edited wins.
+1. Locate candidate instruction files before editing. Identify the master `ai-skills` repository (`https://github.com/JeffreyFerreiras/ai-skills.git`) or target repository files.
 2. Inventory each file's path, size, modified time, and apparent purpose. Use `rg --files -g "AGENTS.md" -g "CLAUDE.md" -g "copilot-instructions.md"` for fast discovery — avoid `Get-ChildItem -Recurse` which is slow.
-3. Identify the source from the user's request. If none is named, use the candidate `AGENTS.md` with the latest modified time as the priority source.
-4. Identify profile-level targets for Claude, Cursor, and Codex. Prefer existing user profile instruction files; otherwise use the defaults above.
+3. Identify the source from the user's request. If none is named, treat `ai-skills/AGENTS.md` as the authoritative master copy.
+4. Identify targets:
+   - Repository-local targets in target projects: `AGENTS.md`, `.cursor/rules/`, `.github/copilot-instructions.md`, `CLAUDE.md`.
+   - Profile-level targets for Claude, Cursor, and Codex: `~/.codex/instructions.md`, `~/.claude/CLAUDE.md`, `~/.cursor/AGENTS.md`. Prefer existing user profile instruction files; otherwise use the defaults above.
 5. Compare overlapping guidance by topic, not only by filename.
 6. Decide whether to copy verbatim, merge, or transform:
    - Copy when the target also supports `AGENTS.md` semantics.
-   - Merge when the priority source and target both contain useful non-conflicting guidance.
+   - Merge when master `AGENTS.md` updates should be applied while preserving repo-specific build/test/run guidance.
    - Transform when the target uses another format such as Cursor rules, VS Code prompts, or Claude user instructions.
 7. Before writes, state each target path and whether the operation will create, copy, merge, transform, or replace.
 8. Back up existing targets with timestamped names before replacement or substantial rewrite.
