@@ -11,16 +11,27 @@ Coordinate profile-level agent capability files across local assistants while pr
 
 Prefer an inventory-first workflow. Treat `.codex/skills`, `.claude`, `.cursor`, and VS Code user-profile files as user-owned configuration unless the user explicitly asks to replace or normalize them.
 
+## Master Repository (`ai-skills`)
+
+The master canonical copy for all skills is the `ai-skills` git repository:
+- Git URL: `https://github.com/JeffreyFerreiras/ai-skills.git`
+- Master skills folder: `skills/` within the repository root.
+
+When updating installed skills in local project repositories (such as `.cursor/skills`, `.agents/skills`, `.codex/skills`, `.claude/skills`, or `.github/skills`) or personal assistant profile roots (`~/.codex/skills`, etc.), treat `ai-skills` as the authoritative master copy.
+
 ## Workflow
 
-1. Locate the relevant profile roots before editing:
-   - Codex: `$CODEX_HOME/skills` when set, otherwise `~/.codex/skills`.
-   - Claude: `~/.claude` and likely skill/instruction subfolders.
-   - Cursor: `~/.cursor` and Cursor user profile settings/rules folders.
-   - VS Code: user profile folders such as `%APPDATA%\Code\User` on Windows.
+1. Locate the relevant roots before editing:
+   - Master repository: discover or clone `https://github.com/JeffreyFerreiras/ai-skills.git` (or the local checkout of `ai-skills`).
+   - Installed repository roots: inspect the target repository for `.cursor/skills`, `.agents/skills`, `.codex/skills`, `.claude/skills`, `.github/skills`, or `skills/`.
+   - Profile roots:
+     - Codex: `$CODEX_HOME/skills` when set, otherwise `~/.codex/skills`.
+     - Claude: `~/.claude` and skill/instruction subfolders.
+     - Cursor: `~/.cursor` and Cursor user profile settings/rules folders.
+     - VS Code: user profile folders such as `%APPDATA%\Code\User` on Windows.
 2. Run an inventory and inspect existing formats, names, and duplicate concepts.
 3. When VS Code should see Codex skills, run `doctor-vscode` before troubleshooting content. VS Code does not discover `~/.codex/skills` unless `chat.agentSkillsLocations` includes it.
-4. Decide the direction of sync with the user request as the source of truth. Do not assume Codex's skill format can be copied directly into every target.
+4. Decide the direction of sync with the user request as the source of truth. When syncing to local repos or profiles, pull latest versions from the master `ai-skills` repository.
 5. Transform content only when needed:
    - Codex skills require a folder with `SKILL.md` frontmatter.
    - Cursor commonly uses rule or instruction files.
@@ -29,8 +40,12 @@ Prefer an inventory-first workflow. Treat `.codex/skills`, `.claude`, `.cursor`,
 6. Before writes, state the target paths and whether the operation will copy, transform, or replace files.
 7. Preserve existing files with timestamped backups before replacement.
 8. Validate by re-running inventory and, where applicable, checking that generated markdown/frontmatter is syntactically valid.
-9. When the user asks to publish profile changes, also update the skills repository:
-   - Use the repository specified by the user or discover the current `ai-skills` checkout.
+9. When the user asks to update installed skills in a local repository or profile from master:
+   - Identify the local `ai-skills` checkout (`https://github.com/JeffreyFerreiras/ai-skills.git`).
+   - Run `sync_agent_skills.py sync-from-master --master <ai-skills-path> --target-repo <target-repo-path>` or `--target-root <target-skills-path>`.
+   - By default this updates existing installed skills to the latest master version. Use `--all` if newly added skills from master should also be installed.
+10. When the user asks to publish profile changes back to master:
+   - Use the repository specified by the user or discover the current `ai-skills` checkout (`https://github.com/JeffreyFerreiras/ai-skills.git`).
    - Mirror each changed skill folder into `<repo>\skills\<skill-name>`.
    - Inspect `git status --short --branch` before staging so unrelated user changes are visible.
    - Commit only the mirrored skill changes with a focused message when the user requests a commit.
@@ -73,9 +88,30 @@ python <skill-dir>\scripts\sync_agent_skills.py sync --source "$HOME\.codex\skil
 
 The script does not convert formats. Use it to inventory, compare checksums, and copy a finalized artifact after deciding that a direct copy is appropriate.
 
-## Repository Update
+## Repository and Profile Update from Master
 
-When updating the repository mirror, keep the profile path and repository skill folder aligned:
+To update installed skills in a project repository or profile from the master repository (`https://github.com/JeffreyFerreiras/ai-skills.git`):
+
+```powershell
+$masterRepo = (git rev-parse --show-toplevel).Trim() # or path to cloned ai-skills repo
+$syncScript = Join-Path $masterRepo 'skills\sync-agent-skills\scripts\sync_agent_skills.py'
+
+# Dry-run updating installed skills in a target project repo
+python $syncScript sync-from-master --master $masterRepo --target-repo 'C:\path\to\my-project'
+
+# Apply updates to all installed skills in target project repo
+python $syncScript sync-from-master --master $masterRepo --target-repo 'C:\path\to\my-project' --apply --force
+
+# Dry-run updating installed skills in a user profile root
+python $syncScript sync-from-master --master $masterRepo --target-root "$HOME\.codex\skills"
+
+# Apply updates to profile root
+python $syncScript sync-from-master --master $masterRepo --target-root "$HOME\.codex\skills" --apply --force
+```
+
+## Publishing Profile Changes to Master Repository
+
+When contributing profile changes back into the master repository (`https://github.com/JeffreyFerreiras/ai-skills.git`), keep the profile path and repository skill folder aligned:
 
 ```powershell
 $repo = (git rev-parse --show-toplevel).Trim()

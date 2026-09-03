@@ -2,6 +2,12 @@
 
 Use these locations as search hints, not as a license to overwrite. Confirm actual files on disk before editing.
 
+## Master Repository (`ai-skills`)
+
+- Master Git URL: `https://github.com/JeffreyFerreiras/ai-skills.git`
+- Master file: `AGENTS.md` at repository root.
+- All profile instruction files and repo-level common agent instructions synchronize from this master copy.
+
 ## Codex
 
 - `~/.codex/instructions.md` for global user instructions.

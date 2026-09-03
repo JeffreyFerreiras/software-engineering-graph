@@ -23,6 +23,17 @@ INTERESTING_SUFFIXES = {
     ".toml",
 }
 
+AI_SKILLS_DEFAULT_REPO_URL = "https://github.com/JeffreyFerreiras/ai-skills.git"
+
+REPO_SKILL_RELATIVE_LOCATIONS = (
+    Path(".cursor/skills"),
+    Path(".agents/skills"),
+    Path(".codex/skills"),
+    Path(".claude/skills"),
+    Path(".github/skills"),
+    Path("skills"),
+)
+
 DEFAULT_EXCLUDED_DIRS = {
     ".git",
     "__pycache__",
@@ -189,8 +200,11 @@ def paths_identical(source: Path, target: Path) -> bool:
         comparison = filecmp.dircmp(source, target)
         if comparison.left_only or comparison.right_only or comparison.funny_files:
             return False
-        if comparison.diff_files:
-            return False
+        # filecmp.dircmp only compares os.stat() signatures by default.
+        # Check actual contents for differing files or subdirectories:
+        for common_file in comparison.common_files:
+            if sha256_file(source / common_file) != sha256_file(target / common_file):
+                return False
         return all(paths_identical(source / child, target / child) for child in comparison.common_dirs)
     return False
 
@@ -199,6 +213,92 @@ def backup_path(target: Path) -> Path:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     backup_dir = target.parent / ".sync-agent-skills-backups"
     return backup_dir / f"{target.name}.{stamp}"
+
+
+def find_installed_repo_skill_roots(
+    repo_root: Path,
+    candidates: Iterable[Path] = REPO_SKILL_RELATIVE_LOCATIONS,
+) -> list[Path]:
+    """Return directories in repo_root that contain installed skill folders."""
+    discovered: list[Path] = []
+    seen_real_paths: set[Path] = set()
+    for rel_path in candidates:
+        candidate = (repo_root / rel_path)
+        if not candidate.is_dir():
+            continue
+        # Avoid treating canonical skills/ as an installed target if repo_root IS the master skills repo
+        # when running in the skills repo itself, unless it's explicitly an installed target.
+        has_skills = any(
+            item.is_dir() and (item / "SKILL.md").is_file()
+            for item in candidate.iterdir()
+        )
+        if has_skills:
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                resolved = candidate
+            if resolved not in seen_real_paths:
+                seen_real_paths.add(resolved)
+                discovered.append(candidate)
+    return discovered
+
+
+def list_skills_in_root(root: Path) -> dict[str, Path]:
+    """Map skill name to its directory inside root."""
+    skills: dict[str, Path] = {}
+    if not root.is_dir():
+        return skills
+    for item in root.iterdir():
+        if item.is_dir() and not item.name.startswith(".") and (item / "SKILL.md").is_file():
+            skills[item.name] = item
+    return skills
+
+
+def sync_skills_from_master(
+    master_skills_dir: Path,
+    target_root: Path,
+    apply: bool = False,
+    force: bool = False,
+    skill_names: Iterable[str] | None = None,
+    only_existing: bool = True,
+) -> list[dict[str, object]]:
+    """Update skills in target_root from master_skills_dir."""
+    master_skills = list_skills_in_root(master_skills_dir)
+    target_skills = list_skills_in_root(target_root)
+    results: list[dict[str, object]] = []
+
+    names_to_sync = (
+        set(skill_names)
+        if skill_names is not None
+        else (set(target_skills.keys()) if only_existing else set(master_skills.keys()))
+    )
+
+    for name in sorted(names_to_sync):
+        if name not in master_skills:
+            results.append(
+                {
+                    "skill": name,
+                    "source": None,
+                    "target": str(target_root / name),
+                    "apply": apply,
+                    "changed": False,
+                    "actions": [f"skill '{name}' not found in master skills repository"],
+                }
+            )
+            continue
+
+        source_path = master_skills[name]
+        copy_res = copy_source(
+            source=source_path,
+            target_root=target_root,
+            target_name=name,
+            apply=apply,
+            force=force,
+        )
+        copy_res["skill"] = name
+        results.append(copy_res)
+
+    return results
 
 
 def copy_source(source: Path, target_root: Path, target_name: str | None, apply: bool, force: bool) -> dict[str, object]:
@@ -427,6 +527,42 @@ def main() -> int:
     vscode_parser.add_argument("--apply", action="store_true", help="Update settings.json after backing it up")
     vscode_parser.add_argument("--json", action="store_true", help="Print JSON")
 
+    sync_from_master_parser = subparsers.add_parser(
+        "sync-from-master",
+        help="Update installed skills in a local repo or profile from master skills repository",
+    )
+    sync_from_master_parser.add_argument(
+        "--master",
+        type=Path,
+        required=True,
+        help="Path to master skills repository (checkout of ai-skills)",
+    )
+    sync_from_master_parser.add_argument(
+        "--target-root",
+        type=Path,
+        action="append",
+        help="Specific target skill directory to update (can be specified multiple times)",
+    )
+    sync_from_master_parser.add_argument(
+        "--target-repo",
+        type=Path,
+        help="Target repository to scan for installed skills (e.g. .cursor/skills, .codex/skills, etc.)",
+    )
+    sync_from_master_parser.add_argument(
+        "--skill",
+        action="append",
+        dest="skills",
+        help="Specific skill name(s) to sync (default: sync all installed or existing skills in target)",
+    )
+    sync_from_master_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Install all master skills, not just currently existing skills in target",
+    )
+    sync_from_master_parser.add_argument("--apply", action="store_true", help="Perform changes; default is dry-run")
+    sync_from_master_parser.add_argument("--force", action="store_true", help="Replace differing target after backing it up")
+    sync_from_master_parser.add_argument("--json", action="store_true", help="Print JSON")
+
     args = parser.parse_args()
     if args.command == "inventory":
         roots = dict(args.root) if args.root else default_roots()
@@ -461,6 +597,49 @@ def main() -> int:
             for action in result["actions"]:
                 prefix = "" if args.apply or action.startswith("VS Code") else "would "
                 print(prefix + action)
+        return 0
+
+    if args.command == "sync-from-master":
+        master_path = args.master.expanduser().resolve()
+        master_skills_dir = master_path / "skills" if (master_path / "skills").is_dir() else master_path
+        if not master_skills_dir.is_dir():
+            raise FileNotFoundError(f"master skills directory not found at {master_skills_dir}")
+
+        target_roots: list[Path] = []
+        if args.target_root:
+            target_roots.extend(p.expanduser().resolve() for p in args.target_root)
+        if args.target_repo:
+            repo_path = args.target_repo.expanduser().resolve()
+            installed = find_installed_repo_skill_roots(repo_path)
+            target_roots.extend(installed)
+
+        if not target_roots:
+            print("No target roots specified or found in target repository.")
+            return 1
+
+        all_results: list[dict[str, object]] = []
+        for target_root in target_roots:
+            res = sync_skills_from_master(
+                master_skills_dir=master_skills_dir,
+                target_root=target_root,
+                apply=args.apply,
+                force=args.force,
+                skill_names=args.skills,
+                only_existing=not args.all,
+            )
+            all_results.extend(res)
+
+        if args.json:
+            print(json.dumps(all_results, indent=2))
+        else:
+            for item in all_results:
+                skill_name = item.get("skill", "")
+                actions = item.get("actions", [])
+                target = item.get("target", "")
+                print(f"Skill '{skill_name}' -> {target}:")
+                for action in actions:
+                    prefix = "would " if not args.apply and not str(action).startswith("target already") and not str(action).startswith("skill '") else ""
+                    print(f"  {prefix}{action}")
         return 0
 
     return 2

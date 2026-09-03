@@ -2,6 +2,24 @@
 
 Use this as a starting map, then verify paths on the local machine. Agent products change their profile layouts over time, and users may override defaults.
 
+## Master Skills Repository
+
+- Git URL: `https://github.com/JeffreyFerreiras/ai-skills.git`
+- Canonical skills tree: `skills/` within the repository root.
+- All skills in profile directories or repository-local folders should sync against this master repository.
+
+## Repository-Local Skill Roots
+
+When working in a project repository, installed skills commonly reside in:
+
+- `.cursor/skills` (Cursor Desktop and Cursor Cloud project skills)
+- `.agents/skills` (Cross-agent project skills)
+- `.codex/skills` (Codex workspace skills)
+- `.claude/skills` (Claude Code workspace skills)
+- `.github/skills` (GitHub Copilot project skills)
+
+`sync_agent_skills.py` scans these locations when using `--target-repo <path>`.
+
 ## Codex
 
 - Primary skill root: `$CODEX_HOME/skills`.
