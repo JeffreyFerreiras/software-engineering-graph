@@ -67,8 +67,7 @@ assertion verifies that exact actual assignment, the Supervisor operates in advi
 ## Using the skill
 
 In a Codex environment where this skill is installed, ask Codex to use
-`software-engineering-graph` for the task. In Cursor, invoke `/software-engineering-graph`
-or ask the agent to use this skill. For example:
+`software-engineering-graph` for the task. For example:
 
 > Use the software-engineering-graph skill for this feature. Before any specialist agents start,
 > show me the exact AI-agent roles, models, and reasoning-effort levels you propose, and ask me to
@@ -82,9 +81,6 @@ implementation scope and the publication contract below.
 ## Repository map
 
 - [`SKILL.md`](SKILL.md) defines the AI skill and its operating contract.
-- [`plugin.json`](plugin.json) advertises this repository as a single-skill Agent Plugin for Cursor.
-- [`.cursor/skills/software-engineering-graph/`](.cursor/skills/software-engineering-graph/) exposes
-  the same skill to Cursor Cloud Agents working in this repository.
 - [`profile-agents/`](profile-agents/) contains the seven reusable Codex role profiles.
 - [`graph_engine/`](graph_engine/) implements deterministic planning, validation, and local state.
 - [`scripts/graphctl.py`](scripts/graphctl.py) is the command-line adapter used by the Supervisor.
