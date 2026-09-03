@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from .contracts import (
     FINDING_ID, ContractError, bounded_string, digest, opaque, require_keys, validate_ref,
 )
+from .hosts import supported_dispatch_weights, dispatch_weight_for
 from .ids import canonical_bytes, sha256_bytes
 
 
@@ -20,12 +21,7 @@ DEFAULT_REVIEW_DELEGATION_LIMITS = {
     **ENGINE_REVIEW_DELEGATION_LIMITS,
     "max_request_rounds": 1,
 }
-SUPPORTED_DISPATCH_WEIGHTS = {
-    ("gpt-5.6-luna", "max"): 3,
-    ("gpt-5.6-sol", "high"): 3,
-    ("gpt-5.6-sol", "xhigh"): 4,
-    ("gpt-5.6-sol", "max"): 5,
-}
+SUPPORTED_DISPATCH_WEIGHTS = supported_dispatch_weights()
 ELIGIBLE_ROLES = {"code_reviewer", "security_reviewer"}
 READ_ONLY_EFFECTS = {"filesystem_read", "external_read"}
 LOCATION_SLASHES = re.compile(r"/+" )
@@ -89,8 +85,8 @@ def validate_policy_config(value: Any) -> Optional[Dict[str, Any]]:
             raise ContractError(field + ".role", "DELEGATION_ROLE_FORBIDDEN")
         model = bounded_string(item["model"], field + ".model", 128)
         effort = bounded_string(item["reasoning_effort"], field + ".reasoning_effort", 32)
-        expected_weight = SUPPORTED_DISPATCH_WEIGHTS.get((model, effort))
-        if expected_weight is None or (model == "gpt-5.6-luna" and effort != "max"):
+        expected_weight = dispatch_weight_for(model, effort)
+        if expected_weight is None:
             raise ContractError(field + ".model", "DELEGATION_ASSIGNMENT_UNSUPPORTED")
         weight = item["dispatch_weight"]
         if isinstance(weight, bool) or not isinstance(weight, int) or weight != expected_weight:

@@ -15,14 +15,22 @@ large, select only pertinent roles, assign each possible role a model and reason
 the size, route floor, assignments, and omitted roles to the human. No branch may execute until the
 human explicitly approves that immutable execution plan.
 
-For new repository implementation work, the Supervisor starts in a new isolated Codex worktree before
-inspecting or changing project files. The task brief records the selected worktree and branch as scope
-context. Reuse an existing checkout or worktree only when the user explicitly directs it; still inspect
-its status and protect unrelated changes before delegating.
+For new repository implementation work, the Supervisor starts in a new isolated implementation
+worktree before inspecting or changing project files. The task brief records the selected worktree
+and branch as scope context. Reuse an existing checkout or worktree only when the user explicitly
+directs it; still inspect its status and protect unrelated changes before delegating.
 
-Recommend `gpt-5.6-sol` with `xhigh` reasoning for the Supervisor. Report the actual Supervisor model
-and effort only when a trusted host runtime assertion makes both values verifiable. If either value is
-missing, unverifiable, or different, operate in advisory mode and display this exact warning:
+Name the host runtime in the execution plan as `codex` or `cursor`. Do not infer the host from a
+task, prompt, environment variable, or agent self-report. Use a trusted host runtime assertion, or
+ask the human. Pass `--host cursor` to `init` when running in Cursor; omit it or pass `--host codex`
+for Codex. Changing host is a new plan.
+
+Recommend the host catalog's Supervisor assignment and dispatch that catalog's resolved models. Codex
+defaults remain `gpt-5.6-sol` with `xhigh` reasoning. Cursor defaults use `cursor-grok-4.6` with
+`high` reasoning rather than ChatGPT Sol, and `composer-2.5` for economy work rather than Luna.
+Report the actual Supervisor model and effort only when a trusted host runtime assertion makes both
+values verifiable. If either value is missing, unverifiable, or different, operate in advisory mode
+and display this exact warning:
 
 > Supervisor warning: This Supervisor is an advisory role and thought partner. Treat its plans, decisions, and synthesis as recommendations requiring your approval.
 
@@ -38,7 +46,7 @@ local operation without a trusted host assertion is advisory.
 3. Initialize the ledger and generate the execution-plan summary. Pass `--size small|medium|large`
    when the Supervisor chooses an explicit size; otherwise the engine records its bounded recommendation:
 
-   `python <skill>/scripts/graphctl.py --repo <repo> [degraded acknowledgments] init --run-id <id> --task-brief <path> --size <size> --op-id <id>`
+   `python <skill>/scripts/graphctl.py --repo <repo> [degraded acknowledgments] init --run-id <id> --task-brief <path> --size <size> [--host codex|cursor] --op-id <id>`
 
 4. Present the returned `execution_plan` and its digest to the human. Record an explicit local approval
    or rejection before dispatching anything:
@@ -58,9 +66,9 @@ local operation without a trusted host assertion is advisory.
    service usage needed to keep each unordered set within capacity. The assessment is immutable.
    For `design_only` and `full_delivery`, the Impact Mapper result creates the fixed assessed-pending
    `design_research_architecture` and `design_research_validation` fan-out before any Tech Lead is
-   created. Both branches reuse the Impact Mapper role at Luna `max`, receive deterministic
-   architecture/validation focus and split inspection budgets, and may project only filesystem or
-   external read capabilities. They must return a verified `evidence_manifest` with evidence, no
+   created. Both branches reuse the Impact Mapper role at the approved host economy assignment,
+   receive deterministic architecture/validation focus and split inspection budgets, and may project
+   only filesystem or external read capabilities. They must return a verified `evidence_manifest` with evidence, no
    decision, and no findings. Sealing `research_collection` materializes the canonical evidence and
    creates the same-generation Tech Lead. A failed exhausted mandatory research pair blocks the run.
 6. Put each returned branch manifest in the derived run inbox shown by `init` or `status`, then use
@@ -173,11 +181,13 @@ Before dispatching any subagent, tell the user its role, exact model, reasoning 
 task scope. When dispatching several agents together, use one compact announcement that lists each
 agent and identifies which work will run in parallel.
 
-Resolve model and effort from the approved execution plan. The plan uses the role profile defaults for
-medium work and bounded size-specific overrides for small or large work. If either value is not exposed,
-state that it is inherited or unavailable instead of guessing, and do not dispatch that role until the
-human approves a plan that makes the assignment explicit. Tell the user before dispatch when a retry,
-replacement, or follow-up changes the model or effort; that change requires a new plan and approval.
+Resolve model and effort from the approved execution plan. The plan names the host catalog, then uses
+the role intelligence-class matrix with that catalog's vendor mapping. Codex profile defaults remain
+the medium Codex mapping. If a value is not exposed, state that it is inherited or unavailable instead
+of guessing, and do not dispatch that role until the human approves a plan that makes the assignment
+explicit. Dispatch Cursor reasoning roles with `dispatch_model` from the plan (`cursor-grok-4.6-high`,
+not ChatGPT Sol). Tell the user before dispatch when a retry, replacement, or follow-up changes the
+host, model, or effort; that change requires a new plan and approval.
 
 ## Select the route
 
@@ -208,10 +218,11 @@ all of its design and delivery roles. Record the route and the reason for each o
 Supervisor's task brief or closure packet so a smaller graph is an explicit scope decision, not an
 accidental missing gate.
 
-The execution plan must list the exact model and reasoning effort for every role that may be dispatched,
-including conditional specialists. Human approval covers that complete assignment matrix. The Impact
-Mapper may narrow the approved role set through route and impact classification, but it may not introduce
-an unapproved role, model, or effort. A retry, replacement, or material route change returns to preflight.
+The execution plan must list the host catalog and the exact model and reasoning effort for every role
+that may be dispatched, including conditional specialists. Human approval covers that complete
+assignment matrix. The Impact Mapper may narrow the approved role set through route and impact
+classification, but it may not introduce an unapproved role, host, model, or effort. A retry,
+replacement, or material route change returns to preflight.
 For every repository implementation intended for delivery, the human-facing plan must list the Pull
 Request Engineer assignment, exact repository, remote, base, head, and allowed non-force publication
 actions. Implementation authorization plus initial plan approval covers those actions after all gates;
@@ -337,8 +348,9 @@ Have it deliver the result, validation, risks, and next action.
 ## Required pull-request publication
 
 For every repository implementation intended for delivery, dispatch a fresh `Pull Request Engineer`
-using exactly `gpt-5.6-luna` with `max` reasoning after all gates and before successful closure. The
-initial implementation authorization and plan approval authorize the plan's exact non-force commit,
+using the approved host publication assignment after all gates and before successful closure. Codex
+uses exactly `gpt-5.6-luna` with `max` reasoning. Cursor uses `composer-2.5` with `high` reasoning.
+The initial implementation authorization and plan approval authorize the plan's exact non-force commit,
 push, and PR actions; no later publication approval is required. This is an instruction-only role with
 no profile, engine node, table, or specialist identifier. The Senior Engineer writes source and tests
 but never publishes.
@@ -360,7 +372,7 @@ one review-ready PR or update and verify the exact existing PR. Draft only on ex
 identity mismatch, secret risk, unrelated state, ambiguity, duplicate PRs, force, amend, history rewrite,
 or scope expansion, and return exact commit, push, and PR evidence.
 
-After required PR approval and separate cleanup approval, a fresh Luna-max dispatch must use an existing
+After required PR approval and separate cleanup approval, a fresh host-catalog publication dispatch must use an existing
 safe checkout or execution context outside the exact clean, registered target; it must not create a
 separate, new, or dedicated cleanup worktree. Reverify the target, branch, HEAD, PR, and approval.
 Refuse dirty, staged, unstaged, untracked, ignored, locked, or ambiguous targets. Run only non-forced
