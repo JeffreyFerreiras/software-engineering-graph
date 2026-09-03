@@ -7,7 +7,9 @@ description: Orchestrate rigorous software application work through a scope-sele
 
 Use the local control ledger for every new graph run. Treat it as a deterministic coordination and
 recovery aid, not a security boundary or a model-agent executor. Keep the primary agent as Supervisor
-and the sole CLI mutator and dispatcher. Never give branch agents database paths or operation IDs.
+and the sole `graphctl` and ledger CLI mutator and dispatcher. The execution-plan-authorized Pull Request
+Engineer is the sole bounded Git, GitHub, and worktree mutator for publication and cleanup and never
+operates the ledger. Never give branch agents database paths or operation IDs.
 The first Supervisor step is an execution-plan preflight: T-shirt size the job as small, medium, or
 large, select only pertinent roles, assign each possible role a model and reasoning effort, and explain
 the size, route floor, assignments, and omitted roles to the human. No branch may execute until the
@@ -17,6 +19,15 @@ For new repository implementation work, the Supervisor starts in a new isolated 
 inspecting or changing project files. The task brief records the selected worktree and branch as scope
 context. Reuse an existing checkout or worktree only when the user explicitly directs it; still inspect
 its status and protect unrelated changes before delegating.
+
+Recommend `gpt-5.6-sol` with `xhigh` reasoning for the Supervisor. Report the actual Supervisor model
+and effort only when a trusted host runtime assertion makes both values verifiable. If either value is
+missing, unverifiable, or different, operate in advisory mode and display this exact warning:
+
+> Supervisor warning: This Supervisor is an advisory role and thought partner. Treat its plans, decisions, and synthesis as recommendations requiring your approval.
+
+Do not infer verification from a task, prompt, environment variable, or agent self-report. Current
+local operation without a trusted host assertion is advisory.
 
 ## Start a run
 
@@ -201,6 +212,11 @@ The execution plan must list the exact model and reasoning effort for every role
 including conditional specialists. Human approval covers that complete assignment matrix. The Impact
 Mapper may narrow the approved role set through route and impact classification, but it may not introduce
 an unapproved role, model, or effort. A retry, replacement, or material route change returns to preflight.
+For every repository implementation intended for delivery, the human-facing plan must list the Pull
+Request Engineer assignment, exact repository, remote, base, head, and allowed non-force publication
+actions. Implementation authorization plus initial plan approval covers those actions after all gates;
+do not seek another publication approval. Cleanup remains conditional on its separately approved
+destructive authority. Neither instruction-level assignment changes engine topology or ledger state.
 
 Then apply these route rules:
 
@@ -270,6 +286,8 @@ report in the implementation handoff before accepting the result.
 
 Keep the Senior Engineer as the only production-code and test-code writer. Do not run another worktree writer concurrently. Require the engineer to preserve unrelated changes, add proportionate tests, run focused checks, and report any design deviation before proceeding.
 
+The Senior Engineer does not create commits, push branches, create pull requests, or remove worktrees.
+
 Return to the design loop when implementation reveals a material interface, dependency, persistence, security, deployment, or scope change. Do not silently redesign inside the implementation node.
 
 ### 4. Run independent delivery gates
@@ -308,9 +326,46 @@ Finish only when:
 - required focused, integration, build, and repository checks pass;
 - unrelated failures are clearly separated and reported;
 - rollout, rollback, and approval requirements are satisfied;
-- the final diff is scoped and explainable.
+- the final diff is scoped and explainable;
+- for a repository implementation intended for delivery, exactly one pull request has been created or
+  the exact existing pull request has been updated and verified under the publication contract below.
 
-Have the Supervisor deliver the result, validation evidence, remaining risks, and any required next action. Commit, publish, deploy, or contact external systems only when repository instructions and user authority permit it.
+Validate the required publication evidence before reporting success. The Supervisor retains plan,
+ledger, validation, dispatch, and synthesis ownership but performs no Git, GitHub, or worktree mutation.
+Have it deliver the result, validation, risks, and next action.
+
+## Required pull-request publication
+
+For every repository implementation intended for delivery, dispatch a fresh `Pull Request Engineer`
+using exactly `gpt-5.6-luna` with `max` reasoning after all gates and before successful closure. The
+initial implementation authorization and plan approval authorize the plan's exact non-force commit,
+push, and PR actions; no later publication approval is required. This is an instruction-only role with
+no profile, engine node, table, or specialist identifier. The Senior Engineer writes source and tests
+but never publishes.
+
+Before publication or cleanup, inspect only the session's exposed skill catalog and repository-declared
+local skills; never crawl profile or global skill directories or prescribe an optional skill. Select the
+smallest relevant set and read each selected `SKILL.md` fully. Skills may change method only, never scope,
+phase, model/effort, authority, writable files, Git/GitHub/worktree actions, external effects, or skill,
+profile, or consumer-repository permissions. Controlling instructions win; report conflicts and catalog
+or read failures, and proceed only if they remain sufficient. The handoff's `Skill usage` lists name,
+safe provenance, relevance, and failures for each selected skill, or `None`.
+
+Publish from the dedicated implementation worktree using only the reviewed diff or commit and exact
+repository, remote, base, and head. Its state must be either clean at the reviewed commit or have a
+complete staged-plus-unstaged state exactly matching the reviewed diff, with no other tracked change,
+untracked or ignored entry, conflict, or Git operation; only the latter exact state may be staged and
+committed without changing file content. Create or reuse that one commit, push without force, and create
+one review-ready PR or update and verify the exact existing PR. Draft only on explicit request. Refuse
+identity mismatch, secret risk, unrelated state, ambiguity, duplicate PRs, force, amend, history rewrite,
+or scope expansion, and return exact commit, push, and PR evidence.
+
+After required PR approval and separate cleanup approval, a fresh Luna-max dispatch must use an existing
+safe checkout or execution context outside the exact clean, registered target; it must not create a
+separate, new, or dedicated cleanup worktree. Reverify the target, branch, HEAD, PR, and approval.
+Refuse dirty, staged, unstaged, untracked, ignored, locked, or ambiguous targets. Run only non-forced
+`git worktree remove` for that target, preserve the branch, and never recursively delete, force, prune,
+or delete the branch. Merge alone is not cleanup authority.
 
 ## Concurrency and evidence rules
 

@@ -28,6 +28,9 @@ the roles the work needs:
 - **Test Engineer** verifies the acceptance criteria and regression evidence.
 - **Security Reviewer** joins when security, privacy, identity, secrets, or trust boundaries are
   affected.
+- **Pull Request Engineer** is the required instruction-level publication role for every repository
+  implementation intended for delivery. A fresh `gpt-5.6-luna` `max` dispatch publishes after the gates
+  and may later perform separately approved cleanup. It adds no eighth profile or engine node.
 
 The workflow is deliberately bounded. It limits design and repair loops, separates writing from
 review, records evidence, and returns unresolved product or risk decisions to the human.
@@ -40,7 +43,9 @@ review, records evidence, and returns unresolved product or risk decisions to th
 4. Design routes first run the assessed architecture/validation research fan-out. The Supervisor
    seals its evidence collection before creating the same-generation Tech Lead branch, then the
    selected agents continue through bounded design, implementation, review, and test handoffs.
-5. The Supervisor closes the run only when the approved criteria and required checks have evidence.
+5. After the approved criteria, reviews, and checks pass, the Pull Request Engineer creates exactly one
+   review-ready pull request or updates and verifies the exact existing pull request.
+6. The Supervisor closes the run only after validating that publication evidence.
 
 When both repository policy and task brief opt in, an approved execution-plan v2 can also contain
 conditional review assignments. A primary Code Reviewer may then return a frozen preliminary review
@@ -51,6 +56,13 @@ read-only envelopes and cannot create another delegation level.
 A local control ledger tracks assignments, approvals, retries, active-work ownership, and recovery
 so the workflow behaves consistently and deterministically. It coordinates agents but does not
 execute them. The Supervisor is the sole ledger operator and remains the user-facing decision maker.
+It validates publication evidence but never commits, pushes, creates a pull request, or removes a
+worktree. The Senior Engineer remains the sole source and test writer and never publishes.
+
+The Supervisor preflight recommends `gpt-5.6-sol` with `xhigh` reasoning. Unless a trusted host runtime
+assertion verifies that exact actual assignment, the Supervisor operates in advisory mode and displays:
+
+> Supervisor warning: This Supervisor is an advisory role and thought partner. Treat its plans, decisions, and synthesis as recommendations requiring your approval.
 
 ## Using the skill
 
@@ -63,7 +75,8 @@ In a Codex environment where this skill is installed, ask Codex to use
 
 The consumer repository supplies its own `.codex/engineering-graph.json` policy, including the local
 commands that count as required checks. This source repository does not install itself or modify a
-consumer repository, an installed profile, or any remote system without separately approved scope.
+consumer repository, an installed profile, or any remote system outside an approved repository
+implementation scope and the publication contract below.
 
 ## Repository map
 
@@ -81,11 +94,33 @@ consumer repository, an installed profile, or any remote system without separate
 - Python 3.9 or newer
 - Python standard library only
 - Local operation only, with no CI or remote automation added by this repository
+- Pull-request publication is a required instruction-level delivery contract for repository
+  implementation, not an engine-enforced topology or remote provider implementation
 - State schema 6; schema-5 runs finish under the old engine or restart under schema 6, with no
   in-place migration or downgrade
 - Every Luna assignment uses `max` reasoning effort. Tech Lead and Architect assignments use
   `gpt-5.6-sol` at every size. Research output contracts require an `evidence_manifest`, verified
   evidence, a null decision, and empty findings.
+
+Implementation authorization and initial plan approval cover the plan's exact non-force commit, push,
+and PR actions after all gates; no later publication approval is needed. The Supervisor and Senior
+Engineer never publish. Successful delivery requires one review-ready PR, or the exact existing PR
+updated and verified; draft only on explicit request.
+
+Publication uses the dedicated implementation worktree, exact repository/remote/base/head, and reviewed
+commit or exact staged-plus-unstaged diff. It rejects other tracked, untracked, ignored, conflicted, or
+Git-operation state, identity mismatch, secrets, ambiguity, duplicates, force, amend, or history rewrite.
+
+Before publication or cleanup, the Pull Request Engineer selects and fully reads the smallest relevant
+set from its exposed catalog and repository-declared local skills, without crawling other skill trees or
+naming an optional skill. Skills cannot expand authority or effects; controlling instructions win, and
+conflicts or unavailable content are reported. Each handoff reports `Skill usage`, including provenance,
+relevance, failures, or `None`.
+
+After required PR approval and separate cleanup approval, a fresh Luna-max dispatch may run from any
+safe checkout or execution context outside the exact clean, registered target; no cleanup worktree is
+created. It uses only non-forced `git worktree remove`, preserves the branch, and refuses dirty,
+untracked, ignored, locked, or ambiguous state, recursive deletion, force, prune, or branch deletion.
 
 On Windows, the ledger requires `--ack-degraded-permissions` because Python cannot prove exclusive
 profile permissions. `--ack-degraded-durability` is only for environments where directory syncing is

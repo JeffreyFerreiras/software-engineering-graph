@@ -46,6 +46,34 @@ the canonical collection and evidence inputs when creating the same-generation T
 Lead exists before that collection is sealed. If a mandatory research branch exhausts its retry,
 the collection advances to a durable blocked run rather than waiting indefinitely.
 
+### Required instruction-level pull-request publication
+
+`Pull Request Engineer` is an instruction-only role with no profile, engine node, schema, table,
+provider, credentials, or specialist identifier. Every repository implementation intended for delivery
+plans a fresh exact `gpt-5.6-luna` `max` publication dispatch with exact repository, remote, base, head,
+and non-force actions. Implementation authorization plus initial plan approval is sufficient after all
+gates; no later publication approval is needed. The Supervisor owns control and evidence but performs no
+Git, GitHub, or worktree mutation; the Senior Engineer writes source and tests but never publishes.
+Successful closure requires one review-ready PR, or the exact existing PR updated and verified; an
+explicit draft request is the only exception.
+
+Each phase selects and fully reads the smallest relevant exposed or repository-declared skill set,
+without naming an optional skill or crawling other skill trees. Skills may change method, never approved
+authority or effects. Controlling instructions win; conflicts and unavailable content are reported, and
+the handoff records `Skill usage` with provenance, relevance, failures, or `None`.
+
+Publication uses the dedicated implementation worktree and exact reviewed commit, or an exact complete
+staged-plus-unstaged diff with no other tracked, untracked, ignored, conflicted, or Git-operation state.
+Only that diff may be staged and committed without content changes. The role creates or reuses one
+commit, pushes without force, and creates or updates the one PR. Identity mismatch, secrets, ambiguity,
+duplicates, force, amend, history rewrite, and scope expansion fail closed.
+
+After required PR approval and separate cleanup approval, a fresh Luna-max dispatch must use an existing
+safe checkout or execution context outside the exact clean, registered target; it must not create a
+separate, new, or dedicated cleanup worktree. It reverifies target, branch, HEAD, PR, and approval,
+then uses only non-forced `git worktree remove`. Dirty, untracked, ignored, locked, or ambiguous state blocks removal;
+the branch is preserved and recursive deletion, force, prune, and branch deletion are forbidden.
+
 ## Fan-out validation
 
 `validate_fanout_ordering` requires an explicit `case_sensitive` keyword. It preserves the existing
@@ -183,11 +211,20 @@ All `gpt-5.6-luna` size assignments use reasoning effort `max`. Tech Lead and Ar
 `gpt-5.6-sol` at every size. The centralized execution-plan invariant rejects an invalid model or
 effort before it can enter a persisted envelope.
 
+The recommended Supervisor assignment is `gpt-5.6-sol` with `xhigh` reasoning. Actual model and effort
+are considered verified only when supplied by a trusted host runtime assertion. Missing, unverifiable,
+or mismatched values select advisory mode and require this exact warning:
+
+> Supervisor warning: This Supervisor is an advisory role and thought partner. Treat its plans, decisions, and synthesis as recommendations requiring your approval.
+
+Task text, prompts, environment variables, and self-reports cannot establish that verification. The
+current local mode is advisory when no trusted assertion is available.
+
 ## Contributor contract
 
 Changes must preserve unrelated work, remain within approved files and behavior, add no dependency
-or packaging system, and avoid generated artifacts. Profiles, consumer repositories, remote systems,
-publishing, deployment, and release operations require separately approved scope.
+or packaging system, and avoid generated artifacts. Approved implementation publication follows the
+contract above; profiles, other remote changes, deployment, and release require separate scope.
 
 Only the focused suite below is permitted during implementation:
 
