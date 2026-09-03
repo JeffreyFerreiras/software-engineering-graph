@@ -1,0 +1,4 @@
+interface:
+  display_name: "Vault Reset"
+  short_description: "Safely reset and reinitialize a knowledge vault"
+  default_prompt: "Use $vault-reset to preview and safely reset this local knowledge vault."

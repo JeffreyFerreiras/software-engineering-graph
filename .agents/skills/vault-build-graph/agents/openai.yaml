@@ -1,0 +1,4 @@
+interface:
+  display_name: "Build Vault Graph"
+  short_description: "Build evidence-backed notes and relationships"
+  default_prompt: "Use $vault-build-graph to semantically review ingested sources and build their evidence-backed note relationships."

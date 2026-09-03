@@ -1,0 +1,4 @@
+interface:
+  display_name: "Recommend Model Effort"
+  short_description: "Choose the right reasoning effort for a task"
+  default_prompt: "Use $recommend-model-effort to recommend the best model effort level for this task."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Process Vault Inbox"
+  short_description: "Ingest sources, then build their graph"
+  default_prompt: "Use $vault-process-inbox to ingest new files and then run $vault-build-graph for every new source."

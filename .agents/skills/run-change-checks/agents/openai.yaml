@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Change Checks"
+  short_description: "Run focused checks for changes"
+  default_prompt: "Use $run-change-checks to select and run the narrowest checks affected by these changes."

@@ -1,0 +1,4 @@
+interface:
+  display_name: ".NET API Docs"
+  short_description: "Document public C# APIs accurately"
+  default_prompt: "Use $api-docs to add accurate XML documentation to the changed public C# APIs."

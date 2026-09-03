@@ -1,0 +1,4 @@
+interface:
+  display_name: "Generate Unit Tests"
+  short_description: "Add focused, maintainable unit tests"
+  default_prompt: "Use $generate-unit-tests to add risk-focused unit tests for this code and run the relevant test target."

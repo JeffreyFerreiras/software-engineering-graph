@@ -1,0 +1,4 @@
+interface:
+  display_name: "Answer from Vault"
+  short_description: "Answer strictly from local vault evidence"
+  default_prompt: "Use $vault-answer to answer a question strictly from this vault's evidence."

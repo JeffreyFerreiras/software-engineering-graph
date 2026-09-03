@@ -1,0 +1,4 @@
+interface:
+  display_name: "Maintain Knowledge Vault"
+  short_description: "Audit and safely repair the local vault"
+  default_prompt: "Use $vault-maintain to audit and safely repair this knowledge vault."
