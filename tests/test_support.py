@@ -59,11 +59,14 @@ class GraphCase(unittest.TestCase):
 
     def initialize(
         self, mode: str = "delivery", route: str = "full_delivery", tags: Optional[List[str]] = None,
-        size: Optional[str] = None, approve: bool = True,
+        size: Optional[str] = None, approve: bool = True, host: Optional[str] = None,
     ):
-        return self.initialize_task(self.task(mode, route, tags), size=size, approve=approve)
+        return self.initialize_task(self.task(mode, route, tags), size=size, approve=approve, host=host)
 
-    def initialize_task(self, task: Dict[str, Any], size: Optional[str] = None, approve: bool = True):
+    def initialize_task(
+        self, task: Dict[str, Any], size: Optional[str] = None, approve: bool = True,
+        host: Optional[str] = None,
+    ):
         task_path = self.repo / "docs" / "task.json"
         task_path.write_text(json.dumps(task), encoding="utf-8")
         args = [
@@ -72,6 +75,8 @@ class GraphCase(unittest.TestCase):
         ]
         if size:
             args.extend(["--size", size])
+        if host:
+            args.extend(["--host", host])
         result = self.graphctl(*args)
         if approve:
             self.graphctl(

@@ -112,6 +112,16 @@ class ReviewerDelegationContractTests(GraphCase):
         unsupported["assignments"][0].update({"model": "gpt-5.6-luna", "reasoning_effort": "high", "dispatch_weight": 2})
         with self.assertRaisesRegex(ContractError, "DELEGATION_ASSIGNMENT_UNSUPPORTED"):
             validate_policy_config(unsupported)
+        cursor = policy_config()
+        cursor["assignments"][0].update({
+            "model": "cursor-grok-4.6", "reasoning_effort": "high", "dispatch_weight": 3,
+        })
+        self.assertEqual(validate_policy_config(cursor)["assignments"][0]["model"], "cursor-grok-4.6")
+        composer = policy_config()
+        composer["assignments"][0].update({
+            "model": "composer-2.5", "reasoning_effort": "high", "dispatch_weight": 3,
+        })
+        self.assertEqual(validate_policy_config(composer)["assignments"][0]["model"], "composer-2.5")
 
     def test_finding_consolidation_deduplicates_and_preserves_conflicts(self):
         finding = {"finding_id": "REV-001", "acceptance_id": "AC-001", "location": "Src\\Cache.cs", "defect_id": "RACE", "summary": "race", "fix_variant": "Use lock", "evidence_ids": []}

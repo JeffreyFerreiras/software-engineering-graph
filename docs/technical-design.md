@@ -30,11 +30,28 @@ The engine uses pragmatic inward-pointing boundaries:
 This separation keeps resource-conflict policy deterministic while leaving platform detection and
 side effects at the outer boundary.
 
+### Host model catalogs
+
+Role intelligence is a host-agnostic class, not a vendor model ID. The size matrix assigns
+`economy`, `reasoning`, or `primary-thread`. `graph_engine/hosts.py` maps those classes onto the
+selected runtime:
+
+| Class | Purpose | Codex | Cursor |
+| --- | --- | --- | --- |
+| `economy` | mapping, research, mechanical implementation, publication | `gpt-5.6-luna` `max` | `composer-2.5` `high` |
+| `reasoning` | design, architecture, independent review | `gpt-5.6-sol` | `cursor-grok-4.6` |
+| `primary-thread` | Supervisor consolidation | inherited | inherited |
+
+Cursor reasoning dispatch uses `cursor-grok-4.6-<effort>` rather than ChatGPT Sol. The execution
+plan records `host`, resolved `model`/`reasoning_effort`, and `dispatch_model`. Human approval covers
+the mapped vendor IDs. Codex remains the default host; `--host cursor` is an explicit plan choice.
+Host detection does not use environment variables or agent self-reports.
+
 ### Pre-design research gate
 
 Every initial `design_only` or `full_delivery` route, design revision, and delivery redesign inserts
 the fixed `design_research_architecture` and `design_research_validation` nodes for the target
-generation. Both nodes use the `impact_mapper` role with the approved Luna `max` assignment and
+generation. Both nodes use the `impact_mapper` role with the approved host economy assignment and
 are held in an assessed-pending `research` fan-out. Their envelopes carry deterministic focus and
 split `inspection_budget` values whose combined totals never exceed the task budget. Research
 capabilities are projected to `filesystem_read` and `external_read` effects only.
@@ -50,7 +67,7 @@ the collection advances to a durable blocked run rather than waiting indefinitel
 
 `Pull Request Engineer` is an instruction-only role with no profile, engine node, schema, table,
 provider, credentials, or specialist identifier. Every repository implementation intended for delivery
-plans a fresh exact `gpt-5.6-luna` `max` publication dispatch with exact repository, remote, base, head,
+plans a fresh host-catalog publication dispatch with exact repository, remote, base, head,
 and non-force actions. Implementation authorization plus initial plan approval is sufficient after all
 gates; no later publication approval is needed. The Supervisor owns control and evidence but performs no
 Git, GitHub, or worktree mutation; the Senior Engineer writes source and tests but never publishes.
@@ -68,7 +85,7 @@ Only that diff may be staged and committed without content changes. The role cre
 commit, pushes without force, and creates or updates the one PR. Identity mismatch, secrets, ambiguity,
 duplicates, force, amend, history rewrite, and scope expansion fail closed.
 
-After required PR approval and separate cleanup approval, a fresh Luna-max dispatch must use an existing
+After required PR approval and separate cleanup approval, a fresh host-catalog publication dispatch must use an existing
 safe checkout or execution context outside the exact clean, registered target; it must not create a
 separate, new, or dedicated cleanup worktree. It reverifies target, branch, HEAD, PR, and approval,
 then uses only non-forced `git worktree remove`. Dirty, untracked, ignored, locked, or ambiguous state blocks removal;
@@ -93,8 +110,10 @@ the safety property while adding an ID-only request channel.
 
 Delegation is default-off. Repository and task contracts may only lower engine ceilings: depth 1,
 3 children per request, 6 per run, 2 rounds per primary reviewer generation, and weighted cost 15.
-The default round ceiling is 1. Supported delegable weights are Luna max 3; Sol high 3, xhigh 4,
-and max 5. Luna low, medium, and high remain unsupported. Primary-thread assignments are forbidden. Only `code_reviewer` and
+The default round ceiling is 1. Supported delegable weights are host-catalog economy 3; reasoning
+high 3, xhigh 4, and max 5. Codex maps those to Luna max and Sol high/xhigh/max. Cursor maps them to
+Composer high and Grok high/xhigh. Economy assignments below the catalog's economy effort remain
+unsupported. Primary-thread assignments are forbidden. Only `code_reviewer` and
 `security_reviewer` are initially eligible, and derived capabilities contain filesystem/external
 read effects only.
 
@@ -207,13 +226,15 @@ Optional application-specialist protocol identifiers remain supported by topolog
 validation even though their role TOMLs are not part of the reusable profile set. No role
 substitution or topology change is introduced.
 
-All `gpt-5.6-luna` size assignments use reasoning effort `max`. Tech Lead and Architect use
-`gpt-5.6-sol` at every size. The centralized execution-plan invariant rejects an invalid model or
-effort before it can enter a persisted envelope.
+All economy size assignments use the selected host catalog's economy effort. Tech Lead and Architect
+use that catalog's reasoning model at every size. The centralized execution-plan invariant rejects an
+invalid host, model, or effort before it can enter a persisted envelope.
 
-The recommended Supervisor assignment is `gpt-5.6-sol` with `xhigh` reasoning. Actual model and effort
-are considered verified only when supplied by a trusted host runtime assertion. Missing, unverifiable,
-or mismatched values select advisory mode and require this exact warning:
+The recommended Supervisor assignment comes from the host catalog. Codex recommends `gpt-5.6-sol`
+with `xhigh` reasoning. Cursor recommends `cursor-grok-4.6` with `high` reasoning rather than
+ChatGPT Sol. Actual model and effort are considered verified only when supplied by a trusted host
+runtime assertion. Missing, unverifiable, or mismatched values select advisory mode and require this
+exact warning:
 
 > Supervisor warning: This Supervisor is an advisory role and thought partner. Treat its plans, decisions, and synthesis as recommendations requiring your approval.
 
