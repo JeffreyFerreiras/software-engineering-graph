@@ -792,3 +792,25 @@ class CliGoldenTraceTests(GraphCase):
         self.assertEqual(code, 0)
         code, invalid = invoke("complete", "--run-id", "RUN-1", "--op-id", "cli-complete")
         self.assertEqual((code, invalid["code"]), (4, "TERMINAL_RUN"))
+
+    def test_v2_size_below_safety_floor_is_stable_and_leaves_no_run_state(self):
+        task_path = self.repo / "docs" / "task.json"
+        task_path.write_text(json.dumps(self.task_v2(risk="high")), encoding="utf-8")
+        stream = io.StringIO()
+        with patch("graph_engine.cli.StateStore", return_value=self.store), redirect_stdout(stream):
+            code = main([
+                "--repo", str(self.repo), "--ack-degraded-permissions",
+                "--ack-degraded-durability", "init", "--run-id", "RUN-SIZE-FLOOR",
+                "--task-brief", str(task_path), "--size", "medium", "--op-id", "size-floor",
+            ])
+        result = json.loads(stream.getvalue())
+        self.assertEqual(
+            (code, result["ok"], result["code"], result["field"]),
+            (4, False, "EXECUTION_SIZE_BELOW_SAFETY_FLOOR", "size"),
+        )
+        self.assertFalse(
+            self.store.run_root("albanian-live-translate", "RUN-SIZE-FLOOR").exists()
+        )
+        self.assertFalse(
+            self.store.inbox_root("albanian-live-translate", "RUN-SIZE-FLOOR").exists()
+        )

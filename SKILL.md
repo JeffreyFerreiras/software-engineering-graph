@@ -177,24 +177,35 @@ eligibility after checking branch dependencies and shared resources.
 
 ## Delegation transparency
 
-Before dispatching any subagent, tell the user its role, exact model, reasoning effort, and bounded
-task scope. When dispatching several agents together, use one compact announcement that lists each
-agent and identifies which work will run in parallel.
+<!-- dispatch-transparency:start -->
+Immediately before every dispatch, tell the user the concrete agent or task name, the bounded scope,
+the exact approved model, and the exact approved reasoning effort. This applies to every initial dispatch,
+fan-out member, retry, replacement, follow-up, and same-role continuation. Refuse the dispatch when
+the concrete identity or any approved assignment value is unavailable, unverifiable, or mismatched;
+do not infer, substitute, or silently inherit missing values. When dispatching several agents together,
+use one compact announcement that lists every concrete name and identifies which work will run in parallel.
+<!-- dispatch-transparency:end -->
 
 Resolve model and effort from the approved execution plan. The plan names the host catalog, then uses
 the role intelligence-class matrix with that catalog's vendor mapping. Codex profile defaults remain
 the medium Codex mapping. If a value is not exposed, state that it is inherited or unavailable instead
 of guessing, and do not dispatch that role until the human approves a plan that makes the assignment
 explicit. Dispatch Cursor reasoning roles with `dispatch_model` from the plan (`cursor-grok-4.6-high`,
-not ChatGPT Sol). Tell the user before dispatch when a retry, replacement, or follow-up changes the
-host, model, or effort; that change requires a new plan and approval.
+not ChatGPT Sol). Any retry, replacement, or follow-up host, model, or effort change requires a new
+plan and approval.
 
 ## Select the route
 
-T-shirt size the job before assigning intelligence. Use small for bounded, low-risk work, medium for
-cross-file or elevated-risk work, and large for critical, cross-cutting, or high-uncertainty work. The
-size is a planning decision, not a proxy for route selection: a small task may still need a full route,
-and a large task may use only the roles pertinent to its approved scope.
+T-shirt size the job before assigning intelligence. Task-brief v2 uses its structured `model_sizing`
+inputs: small requires bounded scope, low risk, low uncertainty, and no mandatory impact tag; medium
+covers medium risk, cross-file scope, medium uncertainty, or a non-security mandatory tag; large is
+required for high or critical risk, `security_privacy`, high uncertainty, or broadly cross-cutting
+scope. High risk intentionally maps to large. A v2 explicit override below that safety floor is refused.
+Task-brief v1 retains the legacy classifier and override behavior.
+
+Size is a model-cost tier, not a proxy for route selection. In particular, v2 `full_delivery` preserves
+every design, implementation, review, testing, and specialist gate while bounded low-risk work may use
+small economy assignments. A large task may still use only the roles pertinent to its approved scope.
 
 Scope the job before selecting roles. Choose the smallest route that preserves the required independence;
 do not dispatch a role merely because it exists in the base graph. Each selected role must have a

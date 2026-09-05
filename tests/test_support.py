@@ -54,6 +54,20 @@ class GraphCase(unittest.TestCase):
             "required_human_decisions": [],
         }
 
+    def task_v2(
+        self, mode: str = "delivery", route: str = "full_delivery",
+        tags: Optional[List[str]] = None, risk: str = "low",
+        scope_extent: str = "bounded", uncertainty: str = "low",
+    ) -> Dict[str, Any]:
+        task = self.task(mode, route, tags)
+        task["schema_version"] = 2
+        task["risk_level"] = risk
+        task["model_sizing"] = {
+            "scope_extent": scope_extent,
+            "uncertainty": uncertainty,
+        }
+        return task
+
     def graphctl(self, *args: str):
         return execute(["--repo", str(self.repo), *args], self.store)[0]
 

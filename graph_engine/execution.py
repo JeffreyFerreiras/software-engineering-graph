@@ -132,6 +132,7 @@ def validate_model_assignment(
 
 
 def recommend_size(task: Mapping[str, Any]) -> Tuple[str, str]:
+    """Return the legacy v1 recommendation without changing its plan contract."""
     if task["risk_level"] == "critical" or task["minimum_route"] == "full_delivery":
         return "large", "critical risk or full-delivery route floor"
     if task["risk_level"] == "high" or task["mandatory_impact_tags"] or task["minimum_route"] in {"design_only", "fast_path"}:
@@ -139,14 +140,64 @@ def recommend_size(task: Mapping[str, Any]) -> Tuple[str, str]:
     return "small", "low-risk advisory work with no mandatory impact tags"
 
 
+def _v2_recommendation_inputs(task: Mapping[str, Any]) -> Dict[str, Any]:
+    return {
+        "risk_level": task["risk_level"],
+        "mandatory_impact_tags": sorted(task["mandatory_impact_tags"]),
+        "model_sizing": {
+            "scope_extent": task["model_sizing"]["scope_extent"],
+            "uncertainty": task["model_sizing"]["uncertainty"],
+        },
+    }
+
+
+def recommend_size_v2(task: Mapping[str, Any]) -> Tuple[str, Tuple[str, ...], Dict[str, Any]]:
+    """Classify model cost from explicit safety inputs, independently of route topology."""
+    inputs = _v2_recommendation_inputs(task)
+    reasons = []
+    if inputs["risk_level"] in {"high", "critical"}:
+        reasons.append("risk_high_or_critical")
+    if "security_privacy" in inputs["mandatory_impact_tags"]:
+        reasons.append("security_privacy_required")
+    if inputs["model_sizing"]["uncertainty"] == "high":
+        reasons.append("uncertainty_high")
+    if inputs["model_sizing"]["scope_extent"] == "broadly_cross_cutting":
+        reasons.append("scope_broadly_cross_cutting")
+    if reasons:
+        return "large", tuple(reasons), inputs
+
+    if inputs["risk_level"] == "medium":
+        reasons.append("risk_medium")
+    if inputs["model_sizing"]["scope_extent"] == "cross_file":
+        reasons.append("scope_cross_file")
+    if inputs["model_sizing"]["uncertainty"] == "medium":
+        reasons.append("uncertainty_medium")
+    if any(tag != "security_privacy" for tag in inputs["mandatory_impact_tags"]):
+        reasons.append("mandatory_nonsecurity_impact_tag")
+    if reasons:
+        return "medium", tuple(reasons), inputs
+    return "small", ("bounded_low_risk_low_uncertainty",), inputs
+
+
 def build_execution_plan(
     run_id: str, task: Mapping[str, Any], requested_size: Optional[str] = None,
     host: str = DEFAULT_HOST,
 ) -> Dict[str, Any]:
-    recommended, recommendation_reason = recommend_size(task)
+    task_schema_version = task["schema_version"]
+    if task_schema_version == 1:
+        recommended, recommendation_reason = recommend_size(task)
+        recommendation_codes: Tuple[str, ...] = ()
+        recommendation_inputs: Optional[Dict[str, Any]] = None
+    elif task_schema_version == 2:
+        recommended, recommendation_codes, recommendation_inputs = recommend_size_v2(task)
+        recommendation_reason = ", ".join(recommendation_codes)
+    else:
+        raise ValueError("unsupported task brief schema")
     size = requested_size or recommended
     if size not in TSHIRT_SIZES:
         raise ValueError("invalid execution size")
+    if task_schema_version == 2 and TSHIRT_SIZES.index(size) < TSHIRT_SIZES.index(recommended):
+        raise ValueError("EXECUTION_SIZE_BELOW_SAFETY_FLOOR")
     assignments = []
     for node_key in sorted(NODE_ROLES):
         role = NODE_ROLES[node_key]
@@ -193,6 +244,10 @@ def build_execution_plan(
     if delegation is not None:
         plan["conditional_review_assignments"] = plan_fragment(delegation)
         plan["reviewer_delegation_limits"] = dict(delegation["limits"])
+    if task_schema_version == 2:
+        plan["size_policy_version"] = 2
+        plan["size_recommendation_inputs"] = recommendation_inputs
+        plan["size_recommendation_reason_codes"] = list(recommendation_codes)
     plan["plan_digest"] = sha256_bytes(canonical_bytes(plan))
     return plan
 

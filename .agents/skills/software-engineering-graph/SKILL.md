@@ -28,3 +28,14 @@ fi
 Then read and follow `$SKILL_DIR/SKILL.md`. Run all commands (`graphctl.py`, etc.) from `$SKILL_DIR`.
 
 Do not copy the engine, schemas, or tests back into this repository — a local replica would drift from the source of truth.
+
+## Delegation transparency
+
+<!-- dispatch-transparency:start -->
+Immediately before every dispatch, tell the user the concrete agent or task name, the bounded scope,
+the exact approved model, and the exact approved reasoning effort. This applies to every initial dispatch,
+fan-out member, retry, replacement, follow-up, and same-role continuation. Refuse the dispatch when
+the concrete identity or any approved assignment value is unavailable, unverifiable, or mismatched;
+do not infer, substitute, or silently inherit missing values. When dispatching several agents together,
+use one compact announcement that lists every concrete name and identifies which work will run in parallel.
+<!-- dispatch-transparency:end -->

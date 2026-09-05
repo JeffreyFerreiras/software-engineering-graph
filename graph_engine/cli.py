@@ -570,7 +570,14 @@ def command_init(args: argparse.Namespace, repo: Path, policy: Mapping[str, Any]
     )
     full_task = validate_task_brief(task_snapshot.parsed, policy_snapshot.digest, policy)
     task = authoritative_task_subset(full_task)
-    execution_plan = build_execution_plan(run_id, task, args.size, host=getattr(args, "host", DEFAULT_HOST))
+    try:
+        execution_plan = build_execution_plan(
+            run_id, task, args.size, host=getattr(args, "host", DEFAULT_HOST),
+        )
+    except ValueError as error:
+        if str(error) == "EXECUTION_SIZE_BELOW_SAFETY_FLOOR":
+            raise ContractError("size", str(error))
+        raise
     skill_root = Path(__file__).resolve().parents[1]
     verified_evidence = [
         resolve_unhashed_reference(ref, "acceptance_evidence", repo, skill_root, policy)

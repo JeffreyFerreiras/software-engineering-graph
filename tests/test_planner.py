@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from graph_engine.config import load_policy
@@ -61,6 +62,304 @@ EXPECTED_SIZE_ASSIGNMENTS = {
 
 
 class PlannerTests(GraphCase):
+    def _normalized_topology(self):
+        database = self.store.db_path("albanian-live-translate", "RUN-1")
+        with self.store.connect(database) as connection:
+            run = connection.execute("SELECT * FROM runs WHERE run_id='RUN-1'").fetchone()
+            node_rows = connection.execute(
+                "SELECT * FROM nodes WHERE run_id='RUN-1' ORDER BY branch_id"
+            ).fetchall()
+            node_identity = {
+                row["branch_id"]: (
+                    row["node_key"], row["role"], row["stage"], row["generation"],
+                    row["specialist_tag"],
+                )
+                for row in node_rows
+            }
+            join_rows = connection.execute(
+                "SELECT * FROM joins WHERE run_id='RUN-1' ORDER BY join_id"
+            ).fetchall()
+            join_identity = {
+                row["join_id"]: (
+                    row["join_key"], row["kind"], row["stage"], row["generation"],
+                )
+                for row in join_rows
+            }
+            fanout_rows = connection.execute(
+                "SELECT * FROM fanouts WHERE run_id='RUN-1' ORDER BY fanout_id"
+            ).fetchall()
+            fanout_identity = {
+                row["fanout_id"]: (row["stage"], row["generation"])
+                for row in fanout_rows
+            }
+            plan_row = connection.execute(
+                "SELECT * FROM execution_plans WHERE run_id='RUN-1'"
+            ).fetchone()
+            task = json.loads(run["task_json"])
+            return {
+                "run": {
+                    "status": run["status"],
+                    "request_mode": run["request_mode"],
+                    "minimum_route": run["minimum_route"],
+                    "selected_route": run["selected_route"],
+                    "selected_tags": json.loads(run["selected_tags_json"] or "[]"),
+                },
+                "approval_barrier": {
+                    "plan_schema_version": json.loads(plan_row["plan_json"])["schema_version"],
+                    "approval_required": json.loads(plan_row["plan_json"])["approval_required"],
+                    "status": plan_row["status"],
+                    "approved": all(
+                        plan_row[key] is not None
+                        for key in ("authority_ref", "approved_at", "approved_by", "approval_digest")
+                    ),
+                },
+                "closure_requirements": {
+                    "acceptance_ids": task["acceptance_ids"],
+                    "required_check_ids": task["required_check_ids"],
+                    "required_human_decisions": task["required_human_decisions"],
+                },
+                "nodes": sorted((
+                    node_identity[row["branch_id"]], bool(row["mandatory"]), row["status"],
+                    row["retry_count"], row["max_retries"],
+                    node_identity.get(row["parent_branch_id"]), row["depth"],
+                ) for row in node_rows),
+                "joins": sorted((
+                    join_identity[row["join_id"]], row["status"], bool(row["degraded"]),
+                ) for row in join_rows),
+                "join_members": sorted((
+                    join_identity[row["join_id"]], node_identity[row["branch_id"]],
+                    bool(row["mandatory"]),
+                ) for row in connection.execute(
+                    "SELECT * FROM join_members ORDER BY join_id,branch_id"
+                )),
+                "fanouts": sorted((
+                    fanout_identity[row["fanout_id"]], row["status"],
+                    tuple(sorted(node_identity[item] for item in json.loads(row["member_branch_ids_json"]))),
+                ) for row in fanout_rows),
+                "fanout_dependencies": sorted((
+                    fanout_identity[row["fanout_id"]], node_identity[row["before_branch_id"]],
+                    node_identity[row["after_branch_id"]], row["reason"],
+                ) for row in connection.execute(
+                    "SELECT * FROM fanout_dependencies ORDER BY fanout_id,before_branch_id,after_branch_id"
+                )),
+            }
+
+    def _full_delivery_topology_trace(self, size):
+        initialized = self.initialize_task(self.task_v2(), size=size, approve=False)
+        assignments = {
+            item["node_key"]: (
+                item["role"], item["intelligence_class"], item["model"],
+                item["reasoning_effort"], item["dispatch_when"],
+            )
+            for item in initialized["execution_plan"]["assignments"]
+        }
+        trace = [self._normalized_topology()]
+        self.graphctl(
+            "record", "plan-approval", "--run-id", "RUN-1",
+            "--plan-digest", initialized["execution_plan_digest"], "--decision", "APPROVE",
+            "--authority-ref", "authority:test", "--op-id", "plan-approval-1",
+        )
+        trace.append(self._normalized_topology())
+
+        specialist_tags = ["release_operations"]
+        self.impact("full_delivery", specialist_tags)
+        trace.append(self._normalized_topology())
+        self._assess_current_fanout_in_order()
+        trace.append(self._normalized_topology())
+        for _ in range(2):
+            self.success(self.claim_raw())
+        self.advance("research_collection")
+        trace.append(self._normalized_topology())
+
+        tech_lead = self.claim_raw()
+        self.assertEqual(tech_lead["node_key"], "tech_lead")
+        self.success(tech_lead)
+        self.advance("design_inputs")
+        trace.append(self._normalized_topology())
+        self._assess_current_fanout_in_order()
+        trace.append(self._normalized_topology())
+        for _ in range(2):
+            self.success(self.claim_raw(), "APPROVE")
+        self.advance("design_collection")
+        trace.append(self._normalized_topology())
+        self.consolidation("design", "APPROVE")
+        self.advance("design_consolidation")
+        trace.append(self._normalized_topology())
+
+        engineer = self.claim_raw()
+        self.assertEqual(engineer["node_key"], "senior_engineer")
+        self.success(engineer, "IMPLEMENTED")
+        self.advance("implementation")
+        trace.append(self._normalized_topology())
+        self._assess_current_fanout_in_order()
+        trace.append(self._normalized_topology())
+        for _ in range(3):
+            self.success(self.claim_raw(), "APPROVE")
+        self.advance("delivery_collection")
+        trace.append(self._normalized_topology())
+        self.consolidation("delivery", "ACCEPT")
+        self.advance("delivery_consolidation")
+        trace.append(self._normalized_topology())
+        return trace, assignments
+
+    def _assess_current_fanout_in_order(self):
+        status = self.graphctl("status", "--run-id", "RUN-1")
+        action = status["next_action"]
+        fanout = next(
+            item for item in status["fanouts"] if item["fanout_id"] == action["fanout_id"]
+        )
+        dependencies = [
+            {
+                "before_branch_id": before,
+                "after_branch_id": after,
+                "reason": "topology-order",
+            }
+            for before, after in zip(
+                fanout["member_branch_ids"], fanout["member_branch_ids"][1:]
+            )
+        ]
+        self.assess_fanout(action["fanout_id"], dependencies)
+
+    def test_v1_plan_shape_and_digest_remain_frozen(self):
+        plan = build_execution_plan("RUN-1", self.task())
+        self.assertEqual(
+            set(plan), {
+                "approval_id", "approval_required", "assignments", "host",
+                "mandatory_impact_tags", "minimum_route", "plan_digest",
+                "publication_assignment", "run_id", "schema_version", "size",
+                "size_recommendation", "size_recommendation_reason", "size_source",
+                "supervisor_recommendation", "task_id",
+            },
+        )
+        self.assertEqual(
+            plan["plan_digest"],
+            "4f1be289d36f4b025ab1a4e56d56cd1be6152246942e9a13370dd30f8be865f0",
+        )
+        self.assertEqual(
+            build_execution_plan("RUN-1", self.task(), "small")["size"], "small",
+        )
+
+    def test_v2_full_delivery_uses_structured_size_policy(self):
+        cases = (
+            ({}, "small", ["bounded_low_risk_low_uncertainty"]),
+            ({"risk": "medium"}, "medium", ["risk_medium"]),
+            ({"scope_extent": "cross_file"}, "medium", ["scope_cross_file"]),
+            ({"uncertainty": "medium"}, "medium", ["uncertainty_medium"]),
+            ({"tags": ["release_operations"]}, "medium", ["mandatory_nonsecurity_impact_tag"]),
+            ({"risk": "high"}, "large", ["risk_high_or_critical"]),
+            ({"risk": "critical", "tags": ["security_privacy"]}, "large", ["risk_high_or_critical", "security_privacy_required"]),
+            ({"tags": ["security_privacy"]}, "large", ["security_privacy_required"]),
+            ({"uncertainty": "high"}, "large", ["uncertainty_high"]),
+            ({"scope_extent": "broadly_cross_cutting"}, "large", ["scope_broadly_cross_cutting"]),
+        )
+        for arguments, expected_size, reasons in cases:
+            with self.subTest(arguments=arguments):
+                plan = build_execution_plan("RUN-1", self.task_v2(**arguments))
+                self.assertEqual(plan["size"], expected_size)
+                self.assertEqual(plan["size_policy_version"], 2)
+                self.assertEqual(plan["size_recommendation_reason_codes"], reasons)
+                self.assertEqual(
+                    set(plan["size_recommendation_inputs"]),
+                    {"risk_level", "mandatory_impact_tags", "model_sizing"},
+                )
+                self.assertEqual(plan["minimum_route"], "full_delivery")
+
+    def test_v2_override_cannot_drop_below_safety_floor(self):
+        with self.assertRaisesRegex(ValueError, "EXECUTION_SIZE_BELOW_SAFETY_FLOOR"):
+            build_execution_plan("RUN-1", self.task_v2(risk="high"), "medium")
+        with self.assertRaisesRegex(ValueError, "EXECUTION_SIZE_BELOW_SAFETY_FLOOR"):
+            build_execution_plan("RUN-1", self.task_v2(scope_extent="cross_file"), "small")
+        self.assertEqual(
+            build_execution_plan("RUN-1", self.task_v2(), "large")["size"], "large",
+        )
+
+    def test_v2_sizes_change_assignments_without_changing_full_delivery_gates(self):
+        traces = {}
+        assignments = {}
+        for index, size in enumerate(("small", "medium", "large")):
+            if index:
+                self.tearDown()
+                self.setUp()
+            traces[size], assignments[size] = self._full_delivery_topology_trace(size)
+        self.assertEqual(traces["small"], traces["medium"])
+        self.assertEqual(traces["small"], traces["large"])
+        self.assertEqual(
+            traces["small"][0]["approval_barrier"],
+            {
+                "plan_schema_version": 1, "approval_required": True,
+                "status": "pending", "approved": False,
+            },
+        )
+        self.assertEqual(
+            traces["small"][1]["approval_barrier"]["status"], "approved",
+        )
+        self.assertTrue(traces["small"][1]["approval_barrier"]["approved"])
+
+        final = traces["small"][-1]
+        self.assertEqual(
+            {item[0][0] for item in final["nodes"]},
+            {
+                "impact_mapper", "design_research_architecture", "design_research_validation",
+                "tech_lead", "architect", "release_operations_reviewer", "senior_engineer",
+                "code_reviewer", "test_engineer", "supervisor_design_consolidation",
+                "supervisor_delivery_consolidation",
+            },
+        )
+        self.assertTrue(all(item[1] for item in final["nodes"]))
+        self.assertTrue(all(item[2] for item in final["join_members"]))
+        self.assertEqual(
+            {
+                item[0][2] for item in final["nodes"]
+                if item[0][0] == "release_operations_reviewer"
+            },
+            {"design", "delivery"},
+        )
+        self.assertEqual(
+            {item[0][0] for item in final["joins"]},
+            {
+                "research_collection", "design_inputs", "design_collection",
+                "design_consolidation", "implementation", "delivery_collection",
+                "delivery_consolidation", "closure",
+            },
+        )
+        self.assertEqual(
+            {item[0][0] for item in final["fanouts"]},
+            {"research", "design", "delivery"},
+        )
+        self.assertEqual(len(final["fanout_dependencies"]), 4)
+        closure = next(item for item in final["joins"] if item[0][0] == "closure")
+        self.assertEqual(closure[1], "open")
+        self.assertEqual(final["run"]["selected_tags"], ["release_operations"])
+        self.assertEqual(
+            final["closure_requirements"],
+            {
+                "acceptance_ids": ["AC-001"], "required_check_ids": ["repo-check"],
+                "required_human_decisions": [],
+            },
+        )
+        engineer_assignments = {
+            size: plan["senior_engineer"] for size, plan in assignments.items()
+        }
+        self.assertEqual(len(set(engineer_assignments.values())), 3)
+
+    def test_host_and_supervisor_mappings_are_unchanged_for_v2(self):
+        codex = build_execution_plan("RUN-1", self.task_v2(), host="codex")
+        cursor = build_execution_plan("RUN-1", self.task_v2(), host="cursor")
+        self.assertEqual(
+            (codex["supervisor_recommendation"]["model"], codex["supervisor_recommendation"]["reasoning_effort"]),
+            ("gpt-5.6-sol", "xhigh"),
+        )
+        self.assertEqual(
+            (cursor["supervisor_recommendation"]["model"], cursor["supervisor_recommendation"]["reasoning_effort"]),
+            ("cursor-grok-4.6", "high"),
+        )
+        cursor_assignments = {
+            item["node_key"]: (item["model"], item["reasoning_effort"])
+            for item in cursor["assignments"]
+        }
+        self.assertEqual(cursor_assignments["senior_engineer"], ("composer-2.5", "high"))
+        self.assertEqual(cursor_assignments["tech_lead"], ("cursor-grok-4.6", "medium"))
+
     def test_size_assignment_matrix_is_exact(self):
         self.assertEqual(SIZE_ASSIGNMENTS, EXPECTED_SIZE_ASSIGNMENTS)
 

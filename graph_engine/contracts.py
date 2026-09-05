@@ -399,8 +399,19 @@ def validate_task_brief(value: Any, policy_digest: str, policy: Mapping[str, Any
         "evidence_paths", "inspection_budget", "required_check_ids",
         "required_human_decisions",
     }
-    require_keys(value, required, required | {"reviewer_delegation"}, "task_brief")
-    if value["schema_version"] != 1:
+    schema_version = value.get("schema_version")
+    if schema_version == 1:
+        require_keys(value, required, required | {"reviewer_delegation"}, "task_brief")
+    elif schema_version == 2:
+        require_keys(
+            value, required | {"model_sizing"},
+            required | {"reviewer_delegation", "model_sizing"}, "task_brief",
+        )
+    else:
+        require_keys(
+            value, required, required | {"reviewer_delegation", "model_sizing"},
+            "task_brief",
+        )
         raise ContractError("schema_version", "UNSUPPORTED_SCHEMA")
     opaque(value["task_id"], "task_id")
     bounded_string(value["objective"], "objective")
@@ -437,6 +448,18 @@ def validate_task_brief(value: Any, policy_digest: str, policy: Mapping[str, Any
     )
     if value["risk_level"] not in {"low", "medium", "high", "critical"}:
         raise ContractError("risk_level", "UNKNOWN_VALUE")
+    if schema_version == 2:
+        model_sizing = value["model_sizing"]
+        if not isinstance(model_sizing, dict):
+            raise ContractError("model_sizing", "INVALID_OBJECT")
+        require_keys(
+            model_sizing, {"scope_extent", "uncertainty"},
+            {"scope_extent", "uncertainty"}, "model_sizing",
+        )
+        if model_sizing["scope_extent"] not in {"bounded", "cross_file", "broadly_cross_cutting"}:
+            raise ContractError("model_sizing.scope_extent", "UNKNOWN_VALUE")
+        if model_sizing["uncertainty"] not in {"low", "medium", "high"}:
+            raise ContractError("model_sizing.uncertainty", "UNKNOWN_VALUE")
     if value["risk_level"] == "critical" and mode == "delivery":
         if minimum != "full_delivery":
             raise ContractError("minimum_route", "CRITICAL_REQUIRES_FULL_DELIVERY")
@@ -500,6 +523,8 @@ def validate_task_brief(value: Any, policy_digest: str, policy: Mapping[str, Any
     result = dict(value)
     result["mandatory_impact_tags"] = tags
     result["authority"] = {"capabilities": sorted(canonical_capabilities, key=lambda c: (c["effect"], c["action"], c["target_ref"]))}
+    if schema_version == 2:
+        result["model_sizing"] = dict(value["model_sizing"])
     if reviewer_delegation is not None:
         for assignment in reviewer_delegation["assignments"]:
             role_caps = {
@@ -533,6 +558,8 @@ def authoritative_task_subset(value: Mapping[str, Any]) -> Dict[str, Any]:
         "required_check_ids": list(value["required_check_ids"]),
         "required_human_decisions": list(value["required_human_decisions"]),
     }
+    if value["schema_version"] == 2:
+        result["model_sizing"] = dict(value["model_sizing"])
     if value.get("reviewer_delegation") is not None:
         result["reviewer_delegation"] = value["reviewer_delegation"]
     return result
