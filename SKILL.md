@@ -15,125 +15,64 @@ large, select only pertinent roles, assign each possible role a model and reason
 the size, route floor, assignments, and omitted roles to the human. No branch may execute until the
 human explicitly approves that immutable execution plan.
 
-For new repository implementation work, the Supervisor starts in a new isolated implementation
-worktree before inspecting or changing project files. The task brief records the selected worktree
-and branch as scope context. Reuse an existing checkout or worktree only when the user explicitly
-directs it; still inspect its status and protect unrelated changes before delegating.
+For new repository implementation work, the Supervisor first performs bounded read-only inspection
+of repository instructions, status, worktree registrations, and the intended base. Within existing
+implementation authority, the Supervisor owns setup: create one new isolated implementation worktree
+and branch before editing project files. This is its sole Git/worktree mutation exception; it does
+not authorize commits, publication, cleanup, force, or changes to an existing checkout. Resolve the
+exact target path and base first, and preserve unrelated work. If repository policy forbids setup,
+report that concrete constraint and continue authorized read-only preparation.
+The task brief records the selected worktree and branch as scope context. Reuse an existing checkout
+or worktree when the user explicitly directs it; still inspect its status before delegating.
 
-Name the host runtime in the execution plan as `codex` or `cursor`. Do not infer the host from a
+Name the host catalog in the execution plan as `codex`, `codex-astra`, or `cursor`.
+`codex-astra` is an opt-in model catalog for the Codex runtime, not a different runtime. Do not infer the host from a
 task, prompt, environment variable, or agent self-report. Use a trusted host runtime assertion, or
 ask the human. Pass `--host cursor` to `init` when running in Cursor; omit it or pass `--host codex`
-for Codex. Changing host is a new plan.
+for the default Codex catalog. Pass `--host codex-astra` only when that catalog is requested or
+approved and the host supports every planned model and effort. Changing catalog is a new plan.
+Before choosing or dispatching a catalog, read [Model catalogs](references/model-catalogs.md).
 
 Recommend the host catalog's Supervisor assignment and dispatch that catalog's resolved models. Codex
 defaults remain `gpt-5.6-sol` with `xhigh` reasoning. Cursor defaults use `cursor-grok-4.6` with
 `high` reasoning rather than ChatGPT Sol, and `composer-2.5` for economy work rather than Luna.
+The optional Astra catalog uses `gpt-6-astra` at the existing reasoning-class efforts, with an
+`xhigh` Supervisor recommendation; economy and publication assignments remain Luna `max`.
 Report the actual Supervisor model and effort only when a trusted host runtime assertion makes both
 values verifiable. If either value is missing, unverifiable, or different, operate in advisory mode
-and display this exact warning:
+and display this exact warning once per run, repeating only if verification status changes:
 
 > Supervisor warning: This Supervisor is an advisory role and thought partner. Treat its plans, decisions, and synthesis as recommendations requiring your approval.
 
 Do not infer verification from a task, prompt, environment variable, or agent self-report. Current
 local operation without a trusted host assertion is advisory.
+Advisory mode describes model verification, not an additional approval gate. Once the execution
+plan is approved, continue routine in-scope decisions, checks, and bounded retries under that approval.
+Ask only for a required human decision or a material change to approved scope, authority, or assignments.
+If a controlling instruction causes a pause, cite its exact file and instruction and explain the
+concrete conflict. Do not infer new approval requirements from optional skill guidance.
 
-## Start a run
+## Ledger procedures
 
-1. Inspect the worktree and create a redacted, immutable task brief matching
-   `references/task-brief.schema.json` under a repository-policy artifact root.
-2. Hash the exact `.codex/engineering-graph.json` bytes and put that digest in the brief's
-   `policy_approval`.
-3. Initialize the ledger and generate the execution-plan summary. Pass `--size small|medium|large`
-   when the Supervisor chooses an explicit size; otherwise the engine records its bounded recommendation:
-
-   `python <skill>/scripts/graphctl.py --repo <repo> [degraded acknowledgments] init --run-id <id> --task-brief <path> --size <size> [--host codex|cursor] --op-id <id>`
-
-4. Present the returned `execution_plan` and its digest to the human. Record an explicit local approval
-   or rejection before dispatching anything:
-
-   `python <skill>/scripts/graphctl.py --repo <repo> record plan-approval --run-id <id> --plan-digest <digest> --decision APPROVE --authority-ref authority:<id> --op-id <id>`
-
-   `next`, `ready`, and `next --claim` remain blocked while this approval is pending. A rejected plan
-   blocks the run; start a new run for a materially different size, route, role set, model, or effort.
-5. Dispatch only the envelope returned by `next --claim` after approval. The first branch is always
-   `impact_mapper`.
-   When `status` reports `record_fanout_assessment`, record one complete, evidence-backed Supervisor
-   assessment before claiming any sibling:
-
-   `python <skill>/scripts/graphctl.py --repo <repo> record fanout-assessment --run-id <id> --fanout-id <id> --assessment-manifest <path> --authority-ref authority:<id> --op-id <id>`
-
-   Cover every listed member and all four resource categories. Order every exclusive conflict and any
-   service usage needed to keep each unordered set within capacity. The assessment is immutable.
-   For `design_only` and `full_delivery`, the Impact Mapper result creates the fixed assessed-pending
-   `design_research_architecture` and `design_research_validation` fan-out before any Tech Lead is
-   created. Both branches reuse the Impact Mapper role at the approved host economy assignment,
-   receive deterministic architecture/validation focus and split inspection budgets, and may project
-   only filesystem or external read capabilities. They must return a verified `evidence_manifest` with evidence, no
-   decision, and no findings. Sealing `research_collection` materializes the canonical evidence and
-   creates the same-generation Tech Lead. A failed exhausted mandatory research pair blocks the run.
-6. Put each returned branch manifest in the derived run inbox shown by `init` or `status`, then use
-   `record branch-result` with the claimed `attempt_id` and `claim_token`. Branch manifests never
-   contain control mutations.
-
-### Optional reviewer delegation
-
-Delegation is disabled unless both the repository policy and task brief provide
-`reviewer_delegation`. An enabled execution-plan v2 lists every conditional assignment and its exact
-role, model, effort, lens, prompt template, reason/acceptance/evidence/scope ceilings, derived
-read-only capabilities, instance limit, and dispatch weight. Human approval covers these values.
-
-A primary Code Reviewer may return `review_preliminary` plus `review_fanout_request`; it never
-dispatches children. The Supervisor records both with the live attempt fence:
-
-`python <skill>/scripts/graphctl.py --repo <repo> record review-fanout --run-id <id> --branch-id <id> --attempt-id <id> --claim-token <token> --preliminary-manifest <path> --request-manifest <path> --authority-ref authority:<id> --op-id <id>`
-
-When status requests it, the Supervisor records the read-only resource assessment:
-
-`python <skill>/scripts/graphctl.py --repo <repo> record review-fanout-assessment --run-id <id> --request-slot-id <id> --assessment-manifest <path> --authority-ref authority:<id> --op-id <id>`
-
-The engine permits depth 1, at most 3 children per request, 6 children and weighted cost 15 per run,
-and at most 2 request rounds. The default round ceiling is 1. Effective values are the minimum of
-engine, repository, task, and approved-plan ceilings. Child failures, timeouts, and skips stay in the
-nested collection and never refund cost. Once every member settles, the parent becomes ready with a
-fresh claim fence and a redacted continuation that cumulatively binds every slot/collection digest,
-exact member tuple, terminal non-success, and finding source without ledger or operation metadata.
-
-On Windows, pass `--ack-degraded-permissions` because Python cannot prove profile DACL exclusivity.
-Pass `--ack-degraded-durability` only when directory sync is genuinely unavailable and the reported
-degraded mode is acceptable. These flags acknowledge platform limitations; they grant no authority.
-
-## Operate the ledger
-
-- Use `ready` or `next --all` to inspect dispatchable branches. Use `next --claim --op-id <id>` to
-  claim exactly one branch atomically.
-- Multi-member fixed review fan-outs begin pending. After the Supervisor assessment, independent roots
-  become ready together and ordered successors promote atomically only after predecessors settle.
-  Retryable failure does not release a successor. Do not use this mechanism as an arbitrary DAG scheduler.
-- Use `join validate` before `join advance`. Collection joins only freeze terminal branch results
-  and activate a typed Supervisor consolidation branch. Consolidation joins alone apply precedence,
-  consume loop budgets, block, or activate the next generation.
-- Use the typed `record timeout`, `skip`, `retry`, `heartbeat`, `approval`, `budget-use`, and
-  `acceptance-evidence` commands for Supervisor mutations. Timeout, result, and heartbeat mutations
-  must present the current attempt fence. Use `check run` for a policy-configured local command;
-  required checks are satisfied only by its ledger receipt, not by a user-authored PASS file.
-- Read consolidation inputs only from the claimed envelope. Its canonical `collection` input embeds
-  every frozen branch result and terminal status, so consolidation branches never need ledger or
-  database access.
-- Give every mutation a unique opaque operation ID. An identical replay is a no-op; changed input
-  under the same ID is an operation conflict.
-- Use `resume` after interruption. Resolve every running branch by ingesting its actual result or
-  recording an explicit timeout with its current attempt fence. Expired leases appear as a timeout
-  action; send `record heartbeat` before expiry when work is still active.
-- Use `complete` only after the closure join, acceptance evidence, approvals, and required checks
-  are satisfied. Use `abort` for rollback; retained databases are audit evidence and are not deleted.
-
-`status --json` is the supported export. Treat it as sensitive operational metadata.
-It also reports schema-6 attempt counts and deterministic UTC wall-clock timing. Retry waits count toward
-branch lifecycle wall time but not active duration or critical-path weight.
+Before initializing, claiming, recording, joining, resuming, or completing a run, read
+[Ledger operations](references/ledger-operations.md) fully. It defines the required approval,
+attempt fences, research and review fan-outs, budgets, recovery, and platform acknowledgments.
+Use only the claimed envelope for dispatch; the first branch is always the Impact Mapper.
 
 ## Operating model
 
-Treat the primary agent as the Supervisor. Keep requirements, decisions, approvals, and user communication in the primary thread. Delegate bounded work to the smallest set of pertinent named role agents, then synthesize their results. The full engineering graph is an available route, not a default requirement.
+Treat a new user message as steering the active task unless it clearly cancels or replaces it.
+Answer status questions briefly, then continue. Incorporate routine clarifications without restarting
+the run. If a change invalidates immutable scope or acceptance criteria, stop dependent dispatches,
+settle running attempts through the ledger, and prepare a new brief and plan; retain valid evidence
+and report what must be revalidated. Never silently edit approved artifacts or discard completed work.
+
+Use concise user updates: outcome or current blocker first, then the next action. Keep detailed
+protocol packets in artifacts. Before evaluating or changing prompting or catalog defaults, read
+[Behavioral evaluations](references/behavioral-evaluations.md); engine tests alone do not establish
+agent behavior.
+
+Treat the primary agent as the Supervisor. Keep requirements, decisions, approvals, and user communication in the primary thread. Dispatch the roles required by the selected executable route and synthesize their results. Use the route mapping below; do not remove a mandatory gate to reduce model cost.
 
 Follow applicable repository instructions before this workflow. Let the repository define architecture, risk triggers, commands, specialists, and completion gates. Do not let this skill expand the user's requested scope or authority.
 
@@ -207,33 +146,28 @@ Size is a model-cost tier, not a proxy for route selection. In particular, v2 `f
 every design, implementation, review, testing, and specialist gate while bounded low-risk work may use
 small economy assignments. A large task may still use only the roles pertinent to its approved scope.
 
-Scope the job before selecting roles. Choose the smallest route that preserves the required independence;
-do not dispatch a role merely because it exists in the base graph. Each selected role must have a
-necessary decision, artifact, review surface, or verification responsibility tied to the task brief.
-The Supervisor and the Impact Mapper remain the control plane, while the execution subgraph may be
-small and task-specific.
+Select one of the four executable routes. Every route begins with the Impact Mapper and retains
+its engine-defined joins and Supervisor consolidation. This mapping is authoritative:
 
-Examples of scope-selected routes include:
+- `advisory`: answer, diagnosis, or review only; a read-only advisory reviewer, then closure. No implementation.
+- `design_only`: research pair, Tech Lead, Architect and required design specialists, then design closure.
+- `fast_path`: documentation or clearly mechanical changes that cannot affect production behavior,
+  dependencies, data, security, operations, or user experience; Senior Engineer, Code Reviewer,
+  Test Engineer and required delivery specialists. Initial research and design gates are omitted.
+- `full_delivery`: every non-trivial implementation, including a focused behavior change; research
+  pair, Tech Lead, Architect and required design specialists, Senior Engineer, Code Reviewer,
+  Test Engineer and required delivery specialists.
 
-- A narrow answer, diagnosis, or review: only the relevant read-only role or roles.
-- A documentation or clearly mechanical change: the fast path, with only the checks needed to show
-  that behavior, dependencies, data, security, operations, and user experience are unaffected.
-- A focused implementation: the roles needed for its design, implementation, affected review surface,
-  and proportionate testing. Add the Architect, Code Reviewer, or Test Engineer when their independent
-  gate protects a real risk or acceptance criterion.
-- A high-risk change: the focused implementation route plus the required security, domain, platform,
-  data, or release specialists.
-
-Use the full graph when the task's complexity, risk, cross-cutting impact, or acceptance gates justify
-all of its design and delivery roles. Record the route and the reason for each omitted base role in the
-Supervisor's task brief or closure packet so a smaller graph is an explicit scope decision, not an
-accidental missing gate.
+There is no reduced focused-implementation route. Record the selected route and why it applies;
+omit roles only as specified by that route. Repository policy may require a stricter route.
 
 The execution plan must list the host catalog and the exact model and reasoning effort for every role
 that may be dispatched, including conditional specialists. Human approval covers that complete
 assignment matrix. The Impact Mapper may narrow the approved role set through route and impact
-classification, but it may not introduce an unapproved role, host, model, or effort. A retry,
-replacement, or material route change returns to preflight.
+classification, but it may not introduce an unapproved role, host, model, or effort. An unchanged
+retry, replacement, or same-role continuation uses the existing approval, attempt fences, and remaining
+budgets. Only a material change to scope, authority, route, role set, host, model, or effort returns
+to preflight for a new plan and approval. Never reset a budget by relabeling a retry as a new task.
 For every repository implementation intended for delivery, the human-facing plan must list the Pull
 Request Engineer assignment, exact repository, remote, base, head, and allowed non-force publication
 actions. Implementation authorization plus initial plan approval covers those actions after all gates;
@@ -242,13 +176,8 @@ destructive authority. Neither instruction-level assignment changes engine topol
 
 Then apply these route rules:
 
-- For an answer, diagnosis, or review request, use only relevant read-only roles and do not implement.
-- For a design-only request, complete the design loop and stop after presenting the approved plan.
 - Every initial design route, design `REVISE`, and delivery `REDESIGN` creates the same-generation
   research pair before its next Tech Lead. Advisory and initial fast-path routes remain direct.
-- For a non-trivial implementation request, run the full graph.
-- For a high-risk change, add the required security, domain, platform, data, or release specialists at the design and verification gates.
-- Use a fast path only for documentation or clearly mechanical changes that cannot affect production behavior, dependencies, data, security, operations, or user experience.
 - A fast-path delivery `REDESIGN` runs fresh design gates, then returns to a fresh Senior Engineer
   and delivery generation without changing the immutable fast-path route floor.
 
@@ -334,7 +263,9 @@ Do not let reviewers or testers repair their own findings.
 
 Have the Supervisor deduplicate and prioritize findings. Use stable IDs such as `ARCH-001`, `REV-001`, `TEST-001`, and `SEC-001`. Route one coherent repair packet to the Senior Engineer.
 
-After repair, return the affected findings to the independent gate that raised them. Re-run broader checks only after focused failures are resolved.
+After repair, return the affected findings to the independent gate that raised them. Run required
+checks and affected regression checks. Broaden or repeat verification only for new changes, failures,
+or an identified unresolved risk; stop when those checks and acceptance criteria are satisfied.
 
 Limit the delivery loop to three repair rounds. Return to the design loop for material design changes. Escalate an unresolved blocker after the third round instead of cycling indefinitely.
 
@@ -343,7 +274,7 @@ Limit the delivery loop to three repair rounds. Return to the design loop for ma
 Finish only when:
 
 - every acceptance criterion has evidence;
-- the Architect's approved design still matches the implementation;
+- when the route includes design gates, the Architect's approved design still matches the implementation;
 - no blocking or major review finding remains;
 - required focused, integration, build, and repository checks pass;
 - unrelated failures are clearly separated and reported;
@@ -353,42 +284,20 @@ Finish only when:
   the exact existing pull request has been updated and verified under the publication contract below.
 
 Validate the required publication evidence before reporting success. The Supervisor retains plan,
-ledger, validation, dispatch, and synthesis ownership but performs no Git, GitHub, or worktree mutation.
+ledger, validation, dispatch, and synthesis ownership. Apart from the bounded initial worktree setup
+above, it performs no Git, GitHub, or worktree mutation.
 Have it deliver the result, validation, risks, and next action.
 
-## Required pull-request publication
+## Publication and cleanup
 
-For every repository implementation intended for delivery, dispatch a fresh `Pull Request Engineer`
-using the approved host publication assignment after all gates and before successful closure. Codex
-uses exactly `gpt-5.6-luna` with `max` reasoning. Cursor uses `composer-2.5` with `high` reasoning.
-The initial implementation authorization and plan approval authorize the plan's exact non-force commit,
-push, and PR actions; no later publication approval is required. This is an instruction-only role with
-no profile, engine node, table, or specialist identifier. The Senior Engineer writes source and tests
-but never publishes.
+For a repository implementation intended for delivery, read [Publication contract](references/publication.md)
+fully before preparing the human-facing plan and again before publication or cleanup. Include exact
+publication authority and generated-artifact locations in that plan. The fresh Pull Request Engineer
+publishes after all gates; the Supervisor verifies its evidence before closure. Cleanup requires
+separate authority and retains stricter worktree cleanliness requirements.
 
-Before publication or cleanup, inspect only the session's exposed skill catalog and repository-declared
-local skills; never crawl profile or global skill directories or prescribe an optional skill. Select the
-smallest relevant set and read each selected `SKILL.md` fully. Skills may change method only, never scope,
-phase, model/effort, authority, writable files, Git/GitHub/worktree actions, external effects, or skill,
-profile, or consumer-repository permissions. Controlling instructions win; report conflicts and catalog
-or read failures, and proceed only if they remain sufficient. The handoff's `Skill usage` lists name,
-safe provenance, relevance, and failures for each selected skill, or `None`.
-
-Publish from the dedicated implementation worktree using only the reviewed diff or commit and exact
-repository, remote, base, and head. Its state must be either clean at the reviewed commit or have a
-complete staged-plus-unstaged state exactly matching the reviewed diff, with no other tracked change,
-untracked or ignored entry, conflict, or Git operation; only the latter exact state may be staged and
-committed without changing file content. Create or reuse that one commit, push without force, and create
-one review-ready PR or update and verify the exact existing PR. Draft only on explicit request. Refuse
-identity mismatch, secret risk, unrelated state, ambiguity, duplicate PRs, force, amend, history rewrite,
-or scope expansion, and return exact commit, push, and PR evidence.
-
-After required PR approval and separate cleanup approval, a fresh host-catalog publication dispatch must use an existing
-safe checkout or execution context outside the exact clean, registered target; it must not create a
-separate, new, or dedicated cleanup worktree. Reverify the target, branch, HEAD, PR, and approval.
-Refuse dirty, staged, unstaged, untracked, ignored, locked, or ambiguous targets. Run only non-forced
-`git worktree remove` for that target, preserve the branch, and never recursively delete, force, prune,
-or delete the branch. Merge alone is not cleanup authority.
+An explicit local-only request excludes publication. Finish the applicable implementation, review,
+and validation gates and report local completion; do not create a PR or invent publication authority.
 
 ## Concurrency and evidence rules
 

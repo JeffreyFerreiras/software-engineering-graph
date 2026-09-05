@@ -703,7 +703,8 @@ class CliGoldenTraceTests(GraphCase):
         self.assertEqual((result["outcome"], self.graphctl("status", "--run-id", "RUN-1")["status"]), ("BLOCK", "blocked"))
 
     def test_mapper_failure_is_evidenced_retryable_and_replayable(self):
-        self.initialize(); mapper = self.claim()
+        initialized = self.initialize()
+        mapper = self.claim()
         evidence = self.repo_artifact("failure", "mapper-failure")
         manifest = {
             "schema_version": 1, "run_id": "RUN-1", "branch_id": mapper["branch_id"],
@@ -720,6 +721,13 @@ class CliGoldenTraceTests(GraphCase):
         self.assertEqual((first["branch_status"], replay["code"], replay["state_revision"]), ("failed", "REPLAYED", first["state_revision"]))
         retried = self.graphctl("record", "retry", "--run-id", "RUN-1", "--branch-id", mapper["branch_id"], "--reason-code", "RETRY", "--op-id", "mapper-retry")
         self.assertEqual(retried["branch_status"], "ready")
+        replacement = self.claim()
+        self.assertEqual(replacement["branch_id"], mapper["branch_id"])
+        self.assertNotEqual(replacement["attempt_id"], mapper["attempt_id"])
+        self.assertEqual(replacement["retry_count"], mapper["retry_count"] + 1)
+        plan = self.graphctl("status", "--run-id", "RUN-1")["execution_plan"]
+        self.assertEqual(plan["status"], "approved")
+        self.assertEqual(plan["plan_digest"], initialized["execution_plan_digest"])
 
     def test_failed_result_wrapper_cannot_satisfy_retry_output_contract(self):
         self.initialize(); self.impact("full_delivery")

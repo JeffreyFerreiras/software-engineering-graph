@@ -129,6 +129,7 @@ def validate_model_assignment(
         raise ValueError("DESIGN_MODEL_REQUIRED")
     if NODE_ROLES.get(node_key) == "impact_mapper" and intelligence_class != "economy":
         raise ValueError("IMPACT_MAPPER_ASSIGNMENT_REQUIRED")
+    dispatch_model(host, model, reasoning_effort)
 
 
 def recommend_size(task: Mapping[str, Any]) -> Tuple[str, str]:
