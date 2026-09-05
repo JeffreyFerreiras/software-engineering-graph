@@ -1,8 +1,8 @@
 # Publication contract
 
 Read this reference fully before preparing publication authority in the plan and before either
-publication or cleanup. It applies only to repository implementation intended for delivery;
-an explicit local-only request excludes publication. The entry skill controls scope and authority.
+publication or cleanup. It applies to repository implementation intended for delivery.
+The entry skill controls scope and authority.
 
 ## Required pull-request publication
 
@@ -13,6 +13,11 @@ The initial implementation authorization and plan approval authorize the plan's 
 push, and PR actions; no later publication approval is required. This is an instruction-only role with
 no profile, engine node, table, or specialist identifier. The Senior Engineer writes source and tests
 but never publishes.
+
+Successful repository implementation ends with a verified PR URL. Passing local gates triggers
+the publication handoff; it does not complete delivery. If commit, push, or PR creation is blocked,
+report the concrete blocker and incomplete delivery. Do not ask again for publication actions
+already covered by implementation authorization and initial plan approval.
 
 Before publication or cleanup, inspect only the session's exposed skill catalog and repository-declared
 local skills; never crawl profile or global skill directories or prescribe an optional skill. Select the

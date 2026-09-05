@@ -296,8 +296,11 @@ publication authority and generated-artifact locations in that plan. The fresh P
 publishes after all gates; the Supervisor verifies its evidence before closure. Cleanup requires
 separate authority and retains stricter worktree cleanliness requirements.
 
-An explicit local-only request excludes publication. Finish the applicable implementation, review,
-and validation gates and report local completion; do not create a PR or invent publication authority.
+Repository implementation is complete only after the Pull Request Engineer commits the reviewed
+change, pushes without force, and creates one review-ready PR or updates and verifies the exact
+existing PR. Local checks passing is a publication handoff, not successful delivery. Return the
+verified PR URL to the user. If publication is blocked, report incomplete delivery and the concrete
+blocker; do not substitute local completion or ask again for already approved publication actions.
 
 ## Concurrency and evidence rules
 

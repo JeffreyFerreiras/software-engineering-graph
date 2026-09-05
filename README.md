@@ -149,7 +149,8 @@ Only verified generated files within exact plan-approved artifact directories ma
 during publication; they must be absent from the index and reviewed diff, contain no secrets or
 unrelated content, and never be force-added or deleted to bypass checks. Cleanup still refuses all
 ignored entries. Read the full [publication contract](references/publication.md) before planning or publishing.
-An explicit local-only request excludes publication and completes after its applicable local gates.
+Passing local gates triggers the Pull Request Engineer's commit, push, and PR handoff. Successful
+repository implementation ends with a verified PR URL; a publication blocker means incomplete delivery.
 
 Before publication or cleanup, the Pull Request Engineer selects and fully reads the smallest relevant
 set from its exposed catalog and repository-declared local skills, without crawling other skill trees or

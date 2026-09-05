@@ -98,7 +98,9 @@ directories, produced by approved commands, with no source, secrets, unrelated c
 links, or index/diff entries. Stage only reviewed paths and report retained generated paths; never
 force-add or delete artifacts to bypass publication checks. This instruction-level rule is not an
 engine-enforced filesystem check. Cleanup still rejects all ignored entries. See the complete
-[publication contract](../references/publication.md). Explicit local-only requests exclude publication.
+[publication contract](../references/publication.md). Passing local gates triggers publication;
+successful repository implementation requires a verified PR URL. Publication blockers are reported
+as incomplete delivery, not replaced with local completion.
 
 After required PR approval and separate cleanup approval, a fresh host-catalog publication dispatch must use an existing
 safe checkout or execution context outside the exact clean, registered target; it must not create a
