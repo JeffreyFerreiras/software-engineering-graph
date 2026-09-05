@@ -404,6 +404,44 @@ class PlannerTests(GraphCase):
                     self.assertTrue(model, (host, size, role))
                     self.assertTrue(resolved, (host, size, role))
 
+    def test_astra_catalog_is_opt_in_and_preserves_roles_and_efforts(self):
+        for size in ("small", "medium", "large"):
+            default = build_execution_plan("RUN-1", self.task(), size)
+            astra = build_execution_plan("RUN-1", self.task(), size, host="codex-astra")
+            self.assertNotEqual(astra["plan_digest"], default["plan_digest"])
+            self.assertEqual(astra["minimum_route"], default["minimum_route"])
+            self.assertEqual(astra["publication_assignment"], default["publication_assignment"])
+            self.assertEqual(astra["supervisor_recommendation"], {
+                "model": "gpt-6-astra", "reasoning_effort": "xhigh", "dispatch_model": "gpt-6-astra",
+            })
+            for original, selected in zip(default["assignments"], astra["assignments"]):
+                expected = dict(original)
+                if original["intelligence_class"] == "reasoning":
+                    expected.update(model="gpt-6-astra", dispatch_model="gpt-6-astra")
+                self.assertEqual(selected, expected)
+
+    def test_astra_catalog_survives_approval_claim_and_resume(self):
+        initialized = self.initialize(host="codex-astra", size="medium")
+        self.impact("full_delivery")
+        lead = self.claim()
+        self.assertEqual(lead["node_key"], "tech_lead")
+        self.assertEqual(lead["model"], "gpt-6-astra")
+        self.assertEqual(lead["reasoning_effort"], "medium")
+        self.graphctl("--ack-degraded-permissions", "--ack-degraded-durability",
+                      "resume", "--run-id", "RUN-1")
+        plan = self.graphctl("status", "--run-id", "RUN-1")["execution_plan"]
+        self.assertEqual(plan["host"], "codex-astra")
+        self.assertEqual(plan["plan_digest"], initialized["execution_plan_digest"])
+        self.assertEqual(plan["status"], "approved")
+
+    def test_astra_assignments_reject_unapproved_efforts_and_catalogs(self):
+        for effort in ("none", "minimal", "low", "ultra", "inherited"):
+            with self.subTest(effort=effort):
+                with self.assertRaisesRegex(ValueError, "MODEL_ASSIGNMENT_INVALID"):
+                    validate_model_assignment("tech_lead", "gpt-6-astra", effort, host="codex-astra")
+        with self.assertRaisesRegex(ValueError, "MODEL_ASSIGNMENT_INVALID"):
+            validate_model_assignment("tech_lead", "gpt-6-astra", "high", host="codex")
+
     def test_execution_plan_prefers_node_assignment_then_role_fallback(self):
         for size in SIZE_ASSIGNMENTS:
             assignments = {

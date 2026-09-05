@@ -25,6 +25,14 @@ HOST_MATRIX: Dict[str, Dict[Tuple[str, str], Tuple[str, str, str]]] = {
         ("reasoning", "max"): ("gpt-5.6-sol", "max", "gpt-5.6-sol"),
         ("primary-thread", "inherited"): ("primary-thread", "inherited", "primary-thread"),
     },
+    "codex-astra": {
+        ("economy", "max"): ("gpt-5.6-luna", "max", "gpt-5.6-luna"),
+        ("reasoning", "medium"): ("gpt-6-astra", "medium", "gpt-6-astra"),
+        ("reasoning", "high"): ("gpt-6-astra", "high", "gpt-6-astra"),
+        ("reasoning", "xhigh"): ("gpt-6-astra", "xhigh", "gpt-6-astra"),
+        ("reasoning", "max"): ("gpt-6-astra", "max", "gpt-6-astra"),
+        ("primary-thread", "inherited"): ("primary-thread", "inherited", "primary-thread"),
+    },
     "cursor": {
         ("economy", "max"): ("composer-2.5", "high", "composer-2.5"),
         ("reasoning", "medium"): ("cursor-grok-4.6", "medium", "cursor-grok-4.6-medium"),
@@ -37,10 +45,12 @@ HOST_MATRIX: Dict[str, Dict[Tuple[str, str], Tuple[str, str, str]]] = {
 
 SUPERVISOR_CLASS = {
     "codex": ("reasoning", "xhigh"),
+    "codex-astra": ("reasoning", "xhigh"),
     "cursor": ("reasoning", "high"),
 }
 PUBLICATION_CLASS = {
     "codex": ("economy", "max"),
+    "codex-astra": ("economy", "max"),
     "cursor": ("economy", "max"),
 }
 

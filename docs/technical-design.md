@@ -47,6 +47,14 @@ The execution plan records `host`, `intelligence_class`, resolved `model`/`reaso
 `dispatch_model`. Human approval covers the mapped vendor IDs. Host detection does not use
 environment variables or agent self-reports.
 
+`--host codex-astra` selects an opt-in catalog for the Codex runtime. It replaces the reasoning
+class model with `gpt-6-astra` at the existing medium/high/xhigh/max efforts and recommends an Astra
+`xhigh` Supervisor. Economy/publication assignments stay Luna `max`, and consolidation stays inherited.
+It does not switch the primary model. Existing catalog mappings, default profiles, and plan digests
+are unchanged. The host must expose each exact approved assignment; see
+[model catalogs](../references/model-catalogs.md). Reviewer delegation accepts Astra high/xhigh/max
+with weights 3/4/5 in both the policy schema and runtime validator. Weights are not monetary prices.
+
 ### Pre-design research gate
 
 Every initial `design_only` or `full_delivery` route, design revision, and delivery redesign inserts
@@ -70,7 +78,8 @@ provider, credentials, or specialist identifier. Every repository implementation
 plans a fresh host-catalog publication dispatch with exact repository, remote, base, head,
 and non-force actions. Implementation authorization plus initial plan approval is sufficient after all
 gates; no later publication approval is needed. The Supervisor owns control and evidence but performs no
-Git, GitHub, or worktree mutation; the Senior Engineer writes source and tests but never publishes.
+Git, GitHub, or worktree mutation during publication; its only mutation exception is initial setup
+as described below. The Senior Engineer writes source and tests but never publishes.
 Successful closure requires one review-ready PR, or the exact existing PR updated and verified; an
 explicit draft request is the only exception.
 
@@ -80,10 +89,19 @@ authority or effects. Controlling instructions win; conflicts and unavailable co
 the handoff records `Skill usage` with provenance, relevance, failures, or `None`.
 
 Publication uses the dedicated implementation worktree and exact reviewed commit, or an exact complete
-staged-plus-unstaged diff with no other tracked, untracked, ignored, conflicted, or Git-operation state.
+staged-plus-unstaged diff with no other tracked, untracked, unapproved ignored, conflicted, or Git-operation state.
 Only that diff may be staged and committed without content changes. The role creates or reuses one
 commit, pushes without force, and creates or updates the one PR. Identity mismatch, secrets, ambiguity,
 duplicates, force, amend, history rewrite, and scope expansion fail closed.
+The sole ignored-entry exception is for verified generated files inside exact plan-approved artifact
+directories, produced by approved commands, with no user-maintained source, secrets, unrelated
+content, escaping links, or index/diff entries. Verified compiler-generated source is permitted
+under these same checks. Stage only reviewed paths and report retained generated paths; never
+force-add or delete artifacts to bypass publication checks. This instruction-level rule is not an
+engine-enforced filesystem check. Cleanup still rejects all ignored entries. See the complete
+[publication contract](../references/publication.md). Passing local gates triggers publication;
+successful repository implementation requires a verified PR URL. Publication blockers are reported
+as incomplete delivery, not replaced with local completion.
 
 After required PR approval and separate cleanup approval, a fresh host-catalog publication dispatch must use an existing
 safe checkout or execution context outside the exact clean, registered target; it must not create a
@@ -261,6 +279,15 @@ exact warning:
 
 Task text, prompts, environment variables, and self-reports cannot establish that verification. The
 current local mode is advisory when no trusted assertion is available.
+Advisory mode does not introduce additional approval gates. Existing execution-plan approval covers
+routine in-scope decisions and unchanged retries, replacements, and continuations within the existing
+budgets. Material changes to scope, authority, route, roles, host, model, or effort require a new plan.
+
+The Supervisor owns initial worktree and branch creation within existing implementation authority,
+after bounded read-only inspection of instructions, status, registrations, and the intended base.
+This setup exception never permits commits, publication, cleanup, force, or mutation of an existing
+checkout. All non-trivial implementation uses `full_delivery`; a reduced focused-implementation
+route is not implemented. The documentation fast path still requires independent review and testing.
 
 ## Contributor contract
 

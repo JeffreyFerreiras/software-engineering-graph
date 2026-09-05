@@ -57,15 +57,33 @@ read-only envelopes and cannot create another delegation level.
 A local control ledger tracks assignments, approvals, retries, active-work ownership, and recovery
 so the workflow behaves consistently and deterministically. It coordinates agents but does not
 execute them. The Supervisor is the sole ledger operator and remains the user-facing decision maker.
-It validates publication evidence but never commits, pushes, creates a pull request, or removes a
-worktree. The Senior Engineer remains the sole source and test writer and never publishes.
+It performs bounded read-only repository preflight and owns creation of the initial implementation
+worktree and branch within existing implementation authority. This sole setup exception does not
+authorize modifying existing worktrees. It validates publication evidence but never commits, pushes,
+creates a pull request, or removes a worktree. The Senior Engineer remains the sole source and test
+writer and never publishes.
 
-The Supervisor preflight names a host catalog (`codex` or `cursor`) and recommends that catalog's
+The Supervisor preflight names a host catalog (`codex`, `codex-astra`, or `cursor`) and recommends that catalog's
 Supervisor assignment. Codex defaults to `gpt-5.6-sol` with `xhigh` reasoning. Cursor defaults to
 `cursor-grok-4.6` with `high` reasoning instead of ChatGPT Sol. Unless a trusted host runtime
 assertion verifies that exact actual assignment, the Supervisor operates in advisory mode and displays:
 
 > Supervisor warning: This Supervisor is an advisory role and thought partner. Treat its plans, decisions, and synthesis as recommendations requiring your approval.
+
+This warning describes model verification; it does not add approval gates. The approved plan covers
+routine in-scope decisions and unchanged retries, replacements, and continuations within existing
+budgets. Material changes to scope, authority, route, roles, host, model, or effort need a new plan.
+
+Use `init --host codex-astra` to opt into Astra for reasoning roles at the existing effort levels,
+with an Astra `xhigh` Supervisor recommendation. Economy and publication roles remain Luna `max`.
+The actual primary model is not switched by the CLI. Verify host availability and exact dispatch
+assignments before approval. Default Codex and Cursor plans and the seven role profile defaults
+remain unchanged. See [model catalogs](references/model-catalogs.md) for compatibility and evaluation.
+
+The four executable routes are `advisory` (read-only review), `design_only` (research and independent
+design approval), `fast_path` (mechanical/documentation implementation plus independent review and
+testing), and `full_delivery` (research, design, implementation, review, and testing). Every
+non-trivial implementation uses `full_delivery`; no reduced focused-implementation route exists.
 
 Task-brief schema v2 makes model sizing explicit with `scope_extent` and `uncertainty`. Bounded,
 low-risk, low-uncertainty work with no mandatory impact tag selects `small`, even when the approved
@@ -125,8 +143,14 @@ Engineer never publish. Successful delivery requires one review-ready PR, or the
 updated and verified; draft only on explicit request.
 
 Publication uses the dedicated implementation worktree, exact repository/remote/base/head, and reviewed
-commit or exact staged-plus-unstaged diff. It rejects other tracked, untracked, ignored, conflicted, or
+commit or exact staged-plus-unstaged diff. It rejects other tracked, untracked, unapproved ignored, conflicted, or
 Git-operation state, identity mismatch, secrets, ambiguity, duplicates, force, amend, or history rewrite.
+Only verified generated files within exact plan-approved artifact directories may remain ignored
+during publication; they must be absent from the index and reviewed diff, contain no secrets or
+unrelated content, and never be force-added or deleted to bypass checks. Cleanup still refuses all
+ignored entries. Read the full [publication contract](references/publication.md) before planning or publishing.
+Passing local gates triggers the Pull Request Engineer's commit, push, and PR handoff. Successful
+repository implementation ends with a verified PR URL; a publication blocker means incomplete delivery.
 
 Before publication or cleanup, the Pull Request Engineer selects and fully reads the smallest relevant
 set from its exposed catalog and repository-declared local skills, without crawling other skill trees or
@@ -145,6 +169,10 @@ unavailable and that limitation is acceptable. These flags acknowledge platform 
 do not grant extra authority.
 
 ## Contributor validation
+
+The [behavioral evaluation protocol](references/behavioral-evaluations.md) supplies reproducible
+host scenarios for approval, routing, artifacts, steering, and model selection. These are live-agent
+evaluations, separate from deterministic engine tests; no live Astra results are claimed here.
 
 Run only the focused acceptance suite below, with bytecode disabled:
 
