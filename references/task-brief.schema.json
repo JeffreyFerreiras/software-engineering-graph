@@ -1,12 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:codex:engineering-graph:task-brief:v1",
+  "$id": "urn:codex:engineering-graph:task-brief:v2",
   "title": "Immutable engineering graph task brief",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "task_id", "objective", "user_outcome", "request_mode", "minimum_route", "mandatory_impact_tags", "scope", "constraints", "acceptance_criteria", "risk_level", "authority", "policy_approval", "evidence_paths", "inspection_budget", "required_check_ids", "required_human_decisions"],
+  "oneOf": [
+    {"properties": {"schema_version": {"const": 1}}, "not": {"required": ["model_sizing"]}},
+    {"required": ["model_sizing"], "properties": {"schema_version": {"const": 2}}}
+  ],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"enum": [1, 2]},
     "task_id": {"$ref": "#/$defs/id"},
     "objective": {"type": "string", "minLength": 1, "maxLength": 4096},
     "user_outcome": {"type": "string", "minLength": 1, "maxLength": 4096},
@@ -23,7 +27,8 @@
     "inspection_budget": {"type": "object", "additionalProperties": false, "required": ["file_reads", "discovery_commands"], "properties": {"file_reads": {"type": "integer", "minimum": 0}, "discovery_commands": {"type": "integer", "minimum": 0}}},
     "required_check_ids": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
     "required_human_decisions": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
-    "reviewer_delegation": {"$ref": "#/$defs/reviewerDelegation"}
+    "reviewer_delegation": {"$ref": "#/$defs/reviewerDelegation"},
+    "model_sizing": {"type": "object", "additionalProperties": false, "required": ["scope_extent", "uncertainty"], "properties": {"scope_extent": {"enum": ["bounded", "cross_file", "broadly_cross_cutting"]}, "uncertainty": {"enum": ["low", "medium", "high"]}}}
   },
   "$defs": {
     "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},

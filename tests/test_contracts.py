@@ -29,17 +29,28 @@ def _validate_json_schema(value, schema, root, path="$", seen_refs=None):
             raise AssertionError("recursive schema reference at " + path)
         return _validate_json_schema(value, target, root, path, seen_refs | {marker})
 
-    if "anyOf" in schema:
+    if "anyOf" in schema or "oneOf" in schema:
+        keyword = "anyOf" if "anyOf" in schema else "oneOf"
         errors = []
-        for candidate in schema["anyOf"]:
+        matches = 0
+        for candidate in schema[keyword]:
             try:
                 _validate_json_schema(value, candidate, root, path, seen_refs)
-                break
+                matches += 1
             except AssertionError as error:
                 errors.append(str(error))
+        if matches == 0:
+            raise AssertionError("{}: no {} alternative matched ({})".format(path, keyword, "; ".join(errors)))
+        if keyword == "oneOf" and matches != 1:
+            raise AssertionError("{}: multiple oneOf alternatives matched".format(path))
+
+    if "not" in schema:
+        try:
+            _validate_json_schema(value, schema["not"], root, path, seen_refs)
+        except AssertionError:
+            pass
         else:
-            raise AssertionError("{}: no anyOf alternative matched ({})".format(path, "; ".join(errors)))
-        return
+            raise AssertionError("{}: forbidden schema matched".format(path))
 
     if "const" in schema and value != schema["const"]:
         raise AssertionError("{}: expected {!r}, got {!r}".format(path, schema["const"], value))
@@ -109,6 +120,42 @@ class ContractTests(GraphCase):
     def test_real_policy_and_task_validate(self):
         task = validate_task_brief(self.task(tags=["security_privacy"]), self.snapshot.digest, self.policy)
         self.assertEqual(task["mandatory_impact_tags"], ["security_privacy"])
+
+    def test_v2_task_requires_exact_structured_model_sizing(self):
+        task = validate_task_brief(self.task_v2(), self.snapshot.digest, self.policy)
+        self.assertEqual(
+            task["model_sizing"], {"scope_extent": "bounded", "uncertainty": "low"},
+        )
+        for mutation, code in (
+            (lambda value: value.pop("model_sizing"), "MISSING_FIELD"),
+            (lambda value: value["model_sizing"].update(extra="no"), "UNKNOWN_FIELD"),
+            (lambda value: value["model_sizing"].update(scope_extent="global"), "UNKNOWN_VALUE"),
+        ):
+            with self.subTest(code=code):
+                candidate = self.task_v2()
+                mutation(candidate)
+                with self.assertRaisesRegex(ContractError, code):
+                    validate_task_brief(candidate, self.snapshot.digest, self.policy)
+
+        legacy = self.task()
+        legacy["model_sizing"] = {"scope_extent": "bounded", "uncertainty": "low"}
+        with self.assertRaisesRegex(ContractError, "UNKNOWN_FIELD"):
+            validate_task_brief(legacy, self.snapshot.digest, self.policy)
+
+    def test_published_task_schema_accepts_exact_v1_and_v2_contracts(self):
+        schema = json.loads(
+            (Path(__file__).parents[1] / "references" / "task-brief.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        _validate_json_schema(self.task(), schema, schema)
+        _validate_json_schema(self.task_v2(), schema, schema)
+        legacy_with_v2_field = self.task()
+        legacy_with_v2_field["model_sizing"] = {
+            "scope_extent": "bounded", "uncertainty": "low",
+        }
+        with self.assertRaises(AssertionError):
+            _validate_json_schema(legacy_with_v2_field, schema, schema)
 
     def test_mapper_cannot_downgrade_or_remove_tag(self):
         task = validate_task_brief(self.task(tags=["security_privacy"]), self.snapshot.digest, self.policy)
@@ -229,6 +276,38 @@ class ContractTests(GraphCase):
                 del mutated["$defs"]["outputContract"]["properties"][field]
                 with self.assertRaisesRegex(AssertionError, "unknown"):
                     _validate_json_schema(fixture, mutated, mutated)
+
+    def test_skill_dispatch_requirements_are_semantically_paired(self):
+        roots = [
+            Path(__file__).parents[1] / "SKILL.md",
+            Path(__file__).parents[1] / ".agents" / "skills" / "software-engineering-graph" / "SKILL.md",
+        ]
+        blocks = []
+        for path in roots:
+            content = path.read_text(encoding="utf-8")
+            start = "<!-- dispatch-transparency:start -->"
+            end = "<!-- dispatch-transparency:end -->"
+            self.assertEqual(content.count(start), 1, path)
+            self.assertEqual(content.count(end), 1, path)
+            blocks.append(content.split(start, 1)[1].split(end, 1)[0].strip())
+        self.assertEqual(blocks[0], blocks[1])
+        required_phrases = (
+            "Immediately before every dispatch",
+            "concrete agent or task name",
+            "exact approved model",
+            "exact approved reasoning effort",
+            "bounded scope",
+            "initial dispatch",
+            "fan-out member",
+            "retry",
+            "replacement",
+            "follow-up",
+            "same-role continuation",
+            "Refuse the dispatch",
+            "unavailable, unverifiable, or mismatched",
+        )
+        for phrase in required_phrases:
+            self.assertIn(phrase, blocks[0], phrase)
 
     def test_policy_missing_research_template_fails_closed(self):
         policy = copy.deepcopy(self.policy)

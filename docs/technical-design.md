@@ -120,8 +120,29 @@ read effects only.
 Execution-plan v2 freezes conditional assignments before human approval. Each assignment contains
 an ID, role, model, effort, review lens and prompt template, reason/acceptance/evidence/scope ceilings,
 derived read-only capabilities, maximum instances, and dispatch weight. Delegation-disabled runs
-continue to emit execution-plan v1 so asserted legacy plans, topology, envelopes, IDs, and traces do
-not change.
+continue to emit execution-plan v1. Execution-plan schema remains controlled only by reviewer
+delegation and is not reused to identify the task-brief or size-policy version.
+
+## Route complexity and model-cost sizing
+
+Task-brief schema v2 adds required structured `model_sizing.scope_extent` (`bounded`, `cross_file`, or
+`broadly_cross_cutting`) and `model_sizing.uncertainty` (`low`, `medium`, or `high`). The canonical
+size inputs contain risk, sorted mandatory impact tags, and those two sizing values. The task schema
+version and minimum route remain separately persisted. Plan reconstruction and resume choose the classifier solely from the
+persisted task-brief schema version, never execution-plan schema, route prose, or metadata presence.
+
+The v2 classifier is safety-ordered. High or critical risk, `security_privacy`, high uncertainty, or
+broadly cross-cutting scope selects `large`; the high-risk-to-large mapping is intentional. Medium risk,
+cross-file scope, medium uncertainty, or a non-security mandatory tag selects `medium`. Only bounded,
+low-risk, low-uncertainty, tag-free work selects `small`. Stable reason codes and canonical inputs are
+included under `size_policy_version: 2`; an explicit override below the computed floor fails closed,
+while a higher override remains allowed.
+
+Route controls topology and gates; size controls model-cost assignments. Therefore a v2 small
+`full_delivery` plan preserves the full research, design, implementation, independent review, test,
+specialist, consolidation, and closure graph. Small, medium, and large plans differ only in the existing
+host-resolved class assignment matrix. Task-brief v1 retains its exact legacy classifier, unrestricted
+override behavior, execution-plan JSON shape, and digest for compatibility.
 
 The primary reviewer returns either its ordinary final result or two data artifacts:
 `review_preliminary` and `review_fanout_request`. The request is exhaustive and contains only the run,
@@ -179,7 +200,7 @@ is out of scope.
 | Schema 5 + old engine | Finish normally |
 | Schema 5 + schema-6 engine | `UNSUPPORTED_STATE_SCHEMA`; restart |
 | Schema 6 + old engine | Rejected; never downgraded |
-| Schema 6, delegation absent | Legacy execution-plan v1 and unchanged route topology |
+| Schema 6, delegation absent | Execution-plan schema 1; task-brief v1 retains legacy plan bytes |
 | Schema 6, delegation enabled | Execution-plan v2 conditional assignments |
 
 There is no in-place migration. Rollback means stop creating schema-6 runs, let schema-5 runs finish

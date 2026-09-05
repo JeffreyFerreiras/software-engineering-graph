@@ -38,7 +38,8 @@ review, records evidence, and returns unresolved product or risk decisions to th
 ## How the AI agents work together
 
 1. The Supervisor turns the request into a scoped task brief with acceptance criteria and non-goals.
-2. The skill sizes the work and proposes exact AI model and reasoning-effort assignments.
+2. The skill sizes model cost independently from route complexity and proposes exact AI model and
+   reasoning-effort assignments.
 3. The human approves the plan before any specialist agent starts.
 4. Design routes first run the assessed architecture/validation research fan-out. The Supervisor
    seals its evidence collection before creating the same-generation Tech Lead branch, then the
@@ -65,6 +66,18 @@ Supervisor assignment. Codex defaults to `gpt-5.6-sol` with `xhigh` reasoning. C
 assertion verifies that exact actual assignment, the Supervisor operates in advisory mode and displays:
 
 > Supervisor warning: This Supervisor is an advisory role and thought partner. Treat its plans, decisions, and synthesis as recommendations requiring your approval.
+
+Task-brief schema v2 makes model sizing explicit with `scope_extent` and `uncertainty`. Bounded,
+low-risk, low-uncertainty work with no mandatory impact tag selects `small`, even when the approved
+route is `full_delivery`. Medium risk, cross-file scope, medium uncertainty, or a non-security
+mandatory tag selects `medium`. High or critical risk, `security_privacy`, high uncertainty, or
+broadly cross-cutting scope selects `large`; high risk mapping to large is intentional. Explicit v2
+overrides may raise cost but cannot go below the computed safety floor.
+
+The route still determines workflow gates. A v2 small `full_delivery` run keeps the same research,
+design, implementation, independent review, testing, specialist, consolidation, and closure topology
+as medium or large; only approved model assignments change. Existing task-brief v1 inputs retain the
+legacy route-influenced classifier, unrestricted explicit override, execution-plan shape, and digest.
 
 ## Using the skill
 

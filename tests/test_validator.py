@@ -13,6 +13,24 @@ from tests.test_support import GraphCase
 
 
 class ValidatorTests(GraphCase):
+    def test_persisted_v2_task_drives_reconstruction_independently_of_plan_schema(self):
+        initialized = self.initialize_task(self.task_v2())
+        self.assertEqual(initialized["execution_plan"]["schema_version"], 1)
+        self.assertEqual(initialized["execution_plan"]["size"], "small")
+        policy, policy_snapshot = load_policy(self.repo)
+        database = self.store.db_path("albanian-live-translate", "RUN-1")
+        skill_root = Path(__file__).resolve().parents[1]
+        with self.store.connect(database) as connection:
+            run = connection.execute("SELECT * FROM runs WHERE run_id='RUN-1'").fetchone()
+            verify_semantic_state(
+                connection, run, self.repo, policy_snapshot.digest, policy, skill_root,
+                case_sensitive=True,
+            )
+            verify_resume(
+                connection, run, self.repo, policy_snapshot.digest, policy, skill_root,
+                case_sensitive=True,
+            )
+
     def test_decision_precedence_is_order_independent(self):
         approve = {"status": "succeeded", "mandatory": 1, "result_json": '{"decision":"APPROVE","findings":[]}', "branch_id": "a"}
         revise = {"status": "succeeded", "mandatory": 1, "result_json": '{"decision":"REVISE","findings":[{"finding_id":"ARCH-001"}]}', "branch_id": "b"}
