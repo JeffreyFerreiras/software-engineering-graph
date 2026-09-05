@@ -94,8 +94,9 @@ Only that diff may be staged and committed without content changes. The role cre
 commit, pushes without force, and creates or updates the one PR. Identity mismatch, secrets, ambiguity,
 duplicates, force, amend, history rewrite, and scope expansion fail closed.
 The sole ignored-entry exception is for verified generated files inside exact plan-approved artifact
-directories, produced by approved commands, with no source, secrets, unrelated content, escaping
-links, or index/diff entries. Stage only reviewed paths and report retained generated paths; never
+directories, produced by approved commands, with no user-maintained source, secrets, unrelated
+content, escaping links, or index/diff entries. Verified compiler-generated source is permitted
+under these same checks. Stage only reviewed paths and report retained generated paths; never
 force-add or delete artifacts to bypass publication checks. This instruction-level rule is not an
 engine-enforced filesystem check. Cleanup still rejects all ignored entries. See the complete
 [publication contract](../references/publication.md). Passing local gates triggers publication;
