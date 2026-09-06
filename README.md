@@ -24,6 +24,9 @@ the roles the work needs:
 - **Tech Lead** designs the change and plans its implementation.
 - **Software Architect** independently reviews the design.
 - **Senior Engineer** is the sole implementation writer.
+  Every implementation and follow-up repair must apply both `clean-code` and
+  `clean-architecture-code`, reporting concrete actions and validation for each. A missing required
+  skill blocks READY_FOR_REVIEW; architecture guidance stays within the approved design.
 - **Code Reviewer** independently reviews the completed change.
 - Every Code Reviewer must apply both `code-review` and `clean-architecture-review`, including
   delegated and follow-up reviews, and report the checks and conclusions from each. Missing either

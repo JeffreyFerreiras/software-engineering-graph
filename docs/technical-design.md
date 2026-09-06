@@ -323,6 +323,14 @@ route is not implemented. The documentation fast path still requires independent
 
 ## Contributor contract
 
+The Senior Engineer role requires both `clean-code` and `clean-architecture-code` on every
+implementation assignment and follow-up repair. Every dispatch and continuation names both skills;
+the role reads them fully and applies both workflows within the approved design. `Skill usage`
+reports concrete implementation actions and validation for each. Missing required content returns
+DESIGN-BLOCKER; the Supervisor rejects READY_FOR_REVIEW without both reports. Architecture guidance
+does not justify additional layers, abstractions, or scope. This is an instruction-level handoff
+requirement, not a new engine decision or schema field.
+
 The Code Reviewer role requires both `code-review` and `clean-architecture-review` on every
 assignment, including delegated and follow-up reviews. Both workflows must be applied within the
 assigned scope and documented in `Skill usage` with concrete checks and conclusions. A missing or

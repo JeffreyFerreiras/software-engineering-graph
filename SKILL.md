@@ -102,6 +102,11 @@ repository instructions. Do not crawl arbitrary profile or global skill director
 smallest clearly relevant skill set for the assigned implementation or review task, then read every
 selected `SKILL.md` fully before acting. Do not prescribe a specific optional skill by name.
 
+Required implementation skills: `clean-code` and `clean-architecture-code`. Every Senior Engineer
+must read both SKILL.md files fully before acting and apply both workflows, including delegated
+implementation and follow-up repairs. Include this requirement in every Senior Engineer dispatch
+and continuation. These skills are mandatory; optional skill selection is additional.
+
 Required review skills: `code-review` and `clean-architecture-review`. Every Code Reviewer must
 read both SKILL.md files fully before acting and apply both workflows, including delegated and
 follow-up reviews. These two skills are mandatory, not optional selections based on apparent
@@ -116,12 +121,15 @@ the role's risks or observations.
 
 If the catalog is unavailable or a selected skill cannot be read, report the condition without
 inventing skill content. A Code Reviewer missing either required skill must report an incomplete
-review; do not accept APPROVE or substitute a generic review. The Senior Engineer and optional
-review-skill failures may proceed only when controlling instructions remain sufficient and both
-required reviewer workflows, when applicable, can still be completed.
+review; do not accept APPROVE or substitute a generic review. A Senior Engineer missing either
+required implementation skill must return DESIGN-BLOCKER, not READY_FOR_REVIEW. Optional skill
+failures may proceed only when controlling instructions remain sufficient and both required
+workflows for the assigned role can still be completed.
 Senior Engineer and Code Reviewer handoffs must each include a `Skill usage` section listing every
-selected skill's name, safe source or provenance, and relevance reason. `None` is permitted only for
-the Senior Engineer when no skill was selected. A completed Code Reviewer handoff must report
+selected skill's name, safe source or provenance, and relevance reason. `None` is not permitted for
+a successful implementation or review handoff. A completed Senior Engineer handoff must report
+concrete implementation actions and validation for each required skill. The Supervisor must reject
+a READY_FOR_REVIEW handoff missing either report. A completed Code Reviewer handoff must report
 concrete checks performed and conclusions for each required skill. The Supervisor must reject a
 successful review handoff missing either report. If no architecture change is present, report that
 evidence-backed assessment without expanding scope; neither workflow may be silently skipped.
@@ -262,8 +270,11 @@ Limit the design loop to three revision rounds. Escalate unresolved product choi
 
 Give the Senior Engineer the approved task brief, technical design, acceptance criteria, and assigned finding IDs.
 
-Include the bounded role skill preflight without naming an optional skill. Require its `Skill usage`
-report in the implementation handoff before accepting the result.
+Include the bounded role skill preflight and explicitly require `clean-code` and
+`clean-architecture-code` in every implementation dispatch and repair continuation. Require its
+`Skill usage` report with concrete actions and validation for both workflows before accepting
+READY_FOR_REVIEW. Apply architecture guidance proportionately to the approved design; do not add
+layers or abstractions merely to demonstrate skill use.
 
 Keep the Senior Engineer as the only production-code and test-code writer. Do not run another worktree writer concurrently. Require the engineer to preserve unrelated changes, add proportionate tests, run focused checks, and report any design deviation before proceeding.
 
