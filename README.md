@@ -114,6 +114,107 @@ commands that count as required checks. This source repository does not install 
 consumer repository, an installed profile, or any remote system outside an approved repository
 implementation scope and the publication contract below.
 
+## Observed token usage
+
+`status` includes optional `usage` accounting from explicitly associated Codex session JSONL files.
+It reports **input + output tokens**, with cached input and reasoning output as subsets, and
+cache writes as a separate metric. It never adds these subsets to the headline total, estimates
+prices, substitutes planned assignments for observed models, or changes a delivery gate.
+
+Before scoping starts, obtain a sanitized checkpoint for the primary session. This read-only
+command requires neither `--repo`, repository policy, nor an initialized ledger:
+
+```text
+python scripts/graphctl.py usage checkpoint --session-log <explicit-session-file>
+```
+
+Keep the returned `source_id`, `offset`, and `prefix_sha256`. After initialization, bind that
+checkpoint to the primary scoping interval:
+
+```text
+python scripts/graphctl.py --repo <repo> record usage --run-id <run> --action bind --session-log <file> --phase scoping --generation 0 --start-offset <offset> --source-id <digest> --prefix-sha256 <digest> --op-id <id>
+```
+
+The three historical checkpoint options are all-or-none. The engine verifies the exact source
+identity, byte prefix, and a validated cumulative snapshot boundary (or offset zero). A mismatch
+rejects the mutation without silently taking a new baseline. Omitting all three starts at the
+latest validated snapshot and excludes earlier history; previously executed phases remain unavailable.
+An offset-zero interval includes the first cumulative total only when validated last-usage counters
+equal that total. Otherwise the first total becomes a baseline and coverage reports a prefix gap.
+
+Associate a branch session with `--branch-id <id> --attempt-id <id>` instead of `--phase` and
+`--generation`. Role, phase, and generation are derived from that executed attempt. Retries have
+distinct attempt IDs; resumed sessions can bind to the same attempt. Delegated reviewers bind their
+own session and attempt. Parent totals never include child rollups. Do not associate overlapping
+work with multiple runs: the engine checks intervals within a run and does not inspect other runs.
+
+```text
+python scripts/graphctl.py --repo <repo> record usage --run-id <run> --action collect --binding-id <binding> --session-log <file> --op-id <id>
+python scripts/graphctl.py --repo <repo> record usage --run-id <run> --action close --binding-id <binding> --session-log <file> --op-id <id>
+python scripts/graphctl.py --repo <repo> status --run-id <run> --json
+```
+
+Close the current primary phase, then bind the next phase using the returned checkpoint. The five
+phase names are `scoping`, `research_design`, `implementation`, `review_testing`, and `closure`.
+Use fresh operation IDs for new samples; repeating the same normalized request and operation ID
+replays its original result, even after an append. Changing explicit input under an existing ID
+conflicts. Collections of already consumed snapshots never add tokens again.
+
+Reports include cumulative totals, all five phases, roles, branch agents, attempts, generations,
+models, efforts, and model/effort pairs. `observed_totals` retains known usage; `complete_totals`
+is null when coverage is incomplete. `coverage` is `unavailable`, `partial`, or `complete`;
+optional missing/discontinuous metrics remain null and appear in `metric_partial`. An unexecuted
+phase or skipped role has no measured consumption. `missing_executed_attempts`,
+`missing_primary_phases`, and `association_coverage` separately expose association gaps.
+Role, agent, and generation summaries retain their relevant missing associations and cannot call
+a measured first attempt complete while an executed retry remains unbound. Supervisor summaries
+also retain missing primary phases by generation. Model, effort, and model/effort summaries state
+`attribution_scope: observed_intervals_only` and expose run `association_coverage`; they do not
+assign an unbound attempt to its planned model or effort.
+Active runs remain provisional (`running: true`, incomplete aggregate coverage); open intervals,
+late telemetry, resets, malformed records, and unknown contexts remain visible. Completion means
+only the declared, closed, observed intervals are covered, not an attestation of all host usage.
+The final response can itself consume tokens beyond the last checkpoint.
+
+At phase boundaries, settled increments can be attributed even within a turn. A response that
+spans a checkpoint, or multiple model/effort contexts between snapshots, can make attribution
+ambiguous. The engine counts such in-run increments once as unattributed and marks coverage
+partial. It excludes increments that could contain pre-run work, and never guesses by elapsed time.
+Counter resets preserve prior observations and omit the uncertain bridge. Truncation, replacement,
+identity change, or prefix rewriting cannot silently restart a binding; use an explicit new binding
+for a replacement and retain the disclosed gap.
+For a replacement retaining the same session ID, earlier overlapping offsets remain rejected.
+Recovery requires a new source identity or a later nonoverlapping checkpoint; rebinding cannot
+bypass the existing interval deduplication rule.
+
+The versioned `codex_jsonl_v1` adapter recognizes `session_meta.payload.id`, observed
+`turn_context.payload.model` and `effort` (or `reasoning_effort`), and
+`event_msg` / `token_count` / `info.total_token_usage` cumulative counters. Required input, output,
+and total counters are nonnegative signed 64-bit integers, with total equal to input plus output;
+booleans are invalid. Optional fields are `cached_input_tokens`, `reasoning_output_tokens`, and
+the observed `cache_write_input_tokens`, normalized in reports to `cache_write_tokens`.
+The legacy source alias `cache_write_tokens` is accepted only when `cache_write_input_tokens`
+is absent. The observed spelling wins even if its value is invalid, which yields a null metric
+rather than falling back to the alias. Aggregates use exact arbitrary-precision integers so valid
+intervals across resets or sessions can exceed the raw signed 64-bit counter limit without
+overflow; consumers must preserve JSON integer precision. Raw source bounds remain unchanged.
+Only the finite host model catalog and finite effort values survive parsing;
+other observed names become `unknown`. Other formats or missing metadata report partial or
+unavailable usage. This observed-log-format adapter is not a claim of a stable public Codex API.
+
+Only an explicit regular file is read, with symlinks/reparse points and identity changes rejected.
+Where supported, the file is opened nonblocking before verifying its regular-file type again,
+so replacement by a FIFO between the initial check and open cannot block the reader.
+Each invocation is bounded to 64 MiB, 1 MiB reads/records, 100,000 records, and JSON depth 24.
+Incomplete trailing lines wait for a later collection. No session search, directory crawl, raw
+conversation, session ID, source path, credentials, or arbitrary source strings enter usage events,
+operation responses, or diagnostic output. The ledger stores hashed source identity, byte-prefix
+checkpoints, normalized counters/context, and fixed diagnostics. These hashes prove continuity,
+not authenticity; association remains the caller's responsibility. Existing schema-6 runs require
+no migration and report unavailable usage until metadata is associated. Optional usage corruption
+does not disable ordinary graph validation or delivery. Usage collection is allowed after complete
+or aborted runs, solely to settle late accounting metadata.
+
 ## Repository map
 
 - [`SKILL.md`](SKILL.md) defines the AI skill and its operating contract.

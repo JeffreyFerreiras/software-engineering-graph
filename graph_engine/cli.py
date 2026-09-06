@@ -25,6 +25,7 @@ from .evidence import (
 from .execution import build_execution_plan, plan_approval_digest
 from .hosts import DEFAULT_HOST, known_hosts
 from .ids import canonical_bytes, sha256_bytes
+from . import usage
 from .reviewer_delegation import (
     consolidate_findings, delegated_identity, freeze_terminal_member, request_slot_id, validate_fanout_request,
     validate_findings, validate_preliminary,
@@ -1381,6 +1382,8 @@ def command_record(
     policy: Mapping[str, Any], task: Mapping[str, Any], store: StateStore,
     semantic_validator: SemanticValidator, *, case_sensitive: bool,
 ) -> Dict[str, Any]:
+    if args.record_kind == "usage":
+        return usage.record(args, connection, run, store, semantic_validator)
     if args.record_kind == "branch-result":
         return _record_branch_result(args, connection, run, policy, task, store, semantic_validator)
     if args.record_kind == "fanout-assessment":
@@ -2016,7 +2019,7 @@ def command_status(connection: sqlite3.Connection, run: sqlite3.Row) -> Dict[str
         state_schema_version=run["state_schema_version"], local_filesystem=run["local_filesystem"],
         durability=run["durability"], durability_detail=run["durability_detail"],
         permission_verification=run["permission_verification"],
-        execution_plan=execution_plan,
+        execution_plan=execution_plan, usage=usage.report(connection, run),
         acknowledgments={
             "host_identity": run["host_identity"],
             "degraded_permissions": bool(run["degraded_permissions_ack"]),
@@ -2170,10 +2173,14 @@ def command_run_control(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="graphctl")
-    parser.add_argument("--repo", required=True)
+    parser.add_argument("--repo")
     parser.add_argument("--ack-degraded-permissions", action="store_true")
     parser.add_argument("--ack-degraded-durability", action="store_true")
     commands = parser.add_subparsers(dest="command", required=True)
+    usage_command = commands.add_parser("usage")
+    usage_commands = usage_command.add_subparsers(dest="usage_kind", required=True)
+    usage_checkpoint = usage_commands.add_parser("checkpoint")
+    usage_checkpoint.add_argument("--session-log", required=True)
     init = commands.add_parser("init")
     init.add_argument("--run-id", required=True); init.add_argument("--task-brief", required=True); init.add_argument("--op-id", required=True)
     init.add_argument("--size", choices=["small", "medium", "large"])
@@ -2182,6 +2189,19 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--ack-degraded-durability", action="store_true", default=argparse.SUPPRESS)
     record = commands.add_parser("record")
     records = record.add_subparsers(dest="record_kind", required=True)
+    usage_record = records.add_parser("usage")
+    usage_record.add_argument("--run-id", required=True)
+    usage_record.add_argument("--action", choices=["bind", "collect", "close"], required=True)
+    usage_record.add_argument("--session-log", required=True)
+    usage_record.add_argument("--op-id", required=True)
+    usage_record.add_argument("--binding-id")
+    usage_record.add_argument("--branch-id")
+    usage_record.add_argument("--attempt-id")
+    usage_record.add_argument("--phase", choices=usage.PHASES)
+    usage_record.add_argument("--generation", type=int)
+    usage_record.add_argument("--start-offset", type=int)
+    usage_record.add_argument("--source-id")
+    usage_record.add_argument("--prefix-sha256")
     branch = records.add_parser("branch-result"); branch.add_argument("--run-id", required=True); branch.add_argument("--branch-id", required=True); branch.add_argument("--attempt-id", required=True); branch.add_argument("--claim-token", required=True); branch.add_argument("--result-manifest", required=True); branch.add_argument("--op-id", required=True)
     for name in ("timeout", "skip"):
         sub = records.add_parser(name); sub.add_argument("--run-id", required=True); sub.add_argument("--branch-id", required=True); sub.add_argument("--reason-code", required=True); sub.add_argument("--evidence-manifest", required=True); sub.add_argument("--op-id", required=True)
@@ -2216,6 +2236,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def execute(argv: Optional[Sequence[str]] = None, store: Optional[StateStore] = None) -> Tuple[Dict[str, Any], int]:
     args = build_parser().parse_args(argv)
+    if args.command == "usage":
+        return usage.checkpoint(args.session_log), 0
+    if args.repo is None:
+        raise ContractError("repo", "MISSING_FIELD")
     case_sensitive = os.path.normcase("A") != os.path.normcase("a")
     repo = Path(args.repo).resolve(strict=True)
     policy, policy_snapshot = load_policy(repo)

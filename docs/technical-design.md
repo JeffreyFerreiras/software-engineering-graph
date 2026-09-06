@@ -1,5 +1,37 @@
 # Software Engineering Graph technical design
 
+## Optional token telemetry
+
+`graph_engine/usage.py` owns the bounded `codex_jsonl_v1` source adapter, sanitized checkpoint
+contract, cumulative-delta reducer, and reports. `record usage` adds only one permission entry
+to the existing mutation-state matrix and persists optional `usage_schema_version: 1` observations
+in `events.detail_json`. There are no new tables, state schema version changes, artifact kinds,
+policy requirements, dispatch behavior, or delivery gates. Existing schema-6 runs remain compatible.
+
+The adapter snapshots one explicitly named regular file. It verifies all path components, opened
+handle identity, stable sampled bytes, and post-read identity under fixed size/record/depth limits.
+Only metadata counters, finite normalized model/effort values, offsets, SHA-256 source/prefix
+identities, and fixed diagnostics survive parsing. The raw path and source payloads never enter
+the request passed to `StateStore.mutate`, which persists requests verbatim. Candidate metadata is
+prepared outside the write transaction; the transaction rechecks prior usage state before applying
+it. Existing operation replay, revision, semantic-validation, and rollback envelopes are preserved.
+
+Each engine-generated binding associates a session source with one executed branch attempt or a
+Supervisor phase/generation. Open and closed intervals for the same source may not overlap within
+a run. Cumulative input/output deltas are counted once, identical snapshots ignored, optional subsets
+kept separate, resets disclosed, and rewritten prefixes never silently restarted. Historical
+checkpoints require source identity, prefix hash, and a full snapshot boundary or offset zero.
+The independent read-only checkpoint command works before repository or ledger initialization.
+
+Attribution follows settled counters and observed context. Ambiguous in-run increments remain in
+the run total with unknown dimensions/unattributed phase; potentially pre-run increments remain
+excluded. Reports expose coverage and association gaps, running state, five phases, roles, branch
+agents, attempts, generations, models, efforts, and model/effort pairs. Aggregate coverage remains
+provisional during a live run. Optional malformed usage state yields unavailable usage without
+bypassing core graph validation. Closed-interval completeness is not a host authenticity or global
+usage attestation. See [the usage contract](../README.md#observed-token-usage) for exact limits,
+supported observed JSONL shape, checkpoint arguments, and source-association responsibilities.
+
 ## Authority and scope
 
 This repository is authoritative for the workflow engine, command-line adapter, schemas, tests,

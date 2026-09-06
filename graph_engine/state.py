@@ -257,6 +257,7 @@ BEGIN SELECT RAISE(ABORT,'REVIEW_FANOUT_IMMUTABLE'); END;
 """
 
 MUTATION_RUN_STATES = {
+    "record.usage": {"initialized", "active", "blocked", "complete", "aborted"},
     "next.claim": {"initialized", "active"},
     "record.branch-result": {"initialized", "active"},
     "record.timeout": {"initialized", "active"},
