@@ -25,6 +25,9 @@ the roles the work needs:
 - **Software Architect** independently reviews the design.
 - **Senior Engineer** is the sole implementation writer.
 - **Code Reviewer** independently reviews the completed change.
+- Every Code Reviewer must apply both `code-review` and `clean-architecture-review`, including
+  delegated and follow-up reviews, and report the checks and conclusions from each. Missing either
+  skill makes the review incomplete; the Supervisor cannot accept approval without both reports.
 - **Test Engineer** verifies the acceptance criteria and regression evidence.
 - **Security Reviewer** joins when security, privacy, identity, secrets, or trust boundaries are
   affected.
