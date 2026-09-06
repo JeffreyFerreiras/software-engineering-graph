@@ -10,6 +10,8 @@ history.
 
 ## Workflow
 
+Use the vault's `.venv/Scripts/python.exe` on Windows or `.venv/bin/python` on Unix for every `python` command below. If it is missing, report the setup requirement instead of silently using system Python.
+
 1. Locate the vault root containing `AGENTS.md` and `vault.config.json`.
 2. Read `AGENTS.md` and follow its repository rules.
 3. Inspect the working tree and explain the reset scope before applying it:

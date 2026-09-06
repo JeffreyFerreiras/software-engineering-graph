@@ -9,9 +9,9 @@ description: Audit, compare, create, and synchronize AGENTS.md-style instruction
 
 Synchronize agent-facing markdown instructions while preserving each tool's native discovery rules, local repo context, and user-owned files.
 
-Prefer inventory and comparison before editing. Use the most recently edited relevant instruction file as the default source when the user does not name one.
+Prefer inventory and comparison before editing. Use the user's explicit source, otherwise the canonical `ai-skills/AGENTS.md`. Timestamps indicate drift, not authority.
 
-Ensure that updates are applied to all installed AI agent tools, including Claude, Cursor, Codex, and Copilot/VS Code prompts, while respecting each tool's discovery model and file format.
+Apply updates only to the requested tools and repositories. Inventory other installed tools without writing to them unless cross-tool sync was requested. For skill-folder synchronization, use `sync-agent-skills` instead.
 
 ## Master Repository (`ai-skills`)
 
@@ -33,7 +33,7 @@ When updating agent instructions across local repositories or profile-level tool
 
 Use these as default profile-level targets after confirming what exists locally:
 
-- Codex: `~/.codex/instructions.md`
+- Codex: `$CODEX_HOME/AGENTS.md`, defaulting to `~/.codex/AGENTS.md`. Inspect `AGENTS.override.md` for precedence and preserve explicitly configured alternatives.
 - Claude: `~/.claude/CLAUDE.md`
 - Cursor: `~/.cursor/AGENTS.md` or the existing profile rule/instruction file under `~/.cursor` or `%APPDATA%/Cursor/User`
 
@@ -46,7 +46,7 @@ Create missing parent directories when the target path is clear. Back up existin
 3. Identify the source from the user's request. If none is named, treat `ai-skills/AGENTS.md` as the authoritative master copy.
 4. Identify targets:
    - Repository-local targets in target projects: `AGENTS.md`, `.cursor/rules/`, `.github/copilot-instructions.md`, `CLAUDE.md`.
-   - Profile-level targets for Claude, Cursor, and Codex: `~/.codex/instructions.md`, `~/.claude/CLAUDE.md`, `~/.cursor/AGENTS.md`. Prefer existing user profile instruction files; otherwise use the defaults above.
+   - Profile-level targets for requested tools: `$CODEX_HOME/AGENTS.md` (default `~/.codex/AGENTS.md`), `~/.claude/CLAUDE.md`, and the verified Cursor instruction location. Prefer configured active files over assumed defaults.
 5. Compare overlapping guidance by topic, not only by filename.
 6. Decide whether to copy verbatim, merge, or transform:
    - Copy when the target also supports `AGENTS.md` semantics.
@@ -54,7 +54,7 @@ Create missing parent directories when the target path is clear. Back up existin
    - Transform when the target uses another format such as Cursor rules, VS Code prompts, or Claude user instructions.
 7. Before writes, state each target path and whether the operation will create, copy, merge, transform, or replace.
 8. Back up existing targets with timestamped names before replacement or substantial rewrite.
-9. Validate by rereading changed files and checking that markdown/frontmatter remains syntactically sane.
+9. Validate by rereading changed files and checking markdown/frontmatter. Verify the target tool loads the destination, including any override precedence; file existence alone is not discovery evidence.
 
 ## File Discovery
 
@@ -65,7 +65,7 @@ For repository-local work, check likely paths:
 ```text
 AGENTS.md
 .agents/AGENTS.md
-.codex/instructions.md
+AGENTS.override.md
 .github/copilot-instructions.md
 .github/prompts/*.prompt.md
 .cursor/rules/*.mdc

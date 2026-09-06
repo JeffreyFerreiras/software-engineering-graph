@@ -20,6 +20,8 @@ When working in a project repository, installed skills commonly reside in:
 
 `sync_agent_skills.py` scans these locations when using `--target-repo <path>`.
 
+For an unqualified sync, invoke it for every discovered local checkout and worktree as well as the installed profiles. Discover repositories beneath known checkout directories with a bounded scan, include `.git` files and registered worktrees, deduplicate resolved skill roots, and skip the canonical source itself. Do not interpret one `--target-repo` invocation as a machine-wide repository scan. Report the discovery boundary and update only existing installed copies unless installation of additional skills was requested.
+
 ## Codex
 
 - Primary skill root: `$CODEX_HOME/skills`.

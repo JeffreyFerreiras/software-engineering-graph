@@ -9,6 +9,8 @@ description: Review code, diffs, pull requests, or architecture plans for Clean 
 
 Review for architectural behavior first: dependency direction, boundary leakage, misplaced business rules, and abstractions that either protect real boundaries or add needless ceremony. Lead with actionable findings, grounded in file and line references when reviewing code.
 
+Use this focused workflow for architecture questions. For a general diff or regression review, use `code-review` and inspect architectural concerns only where the evidence warrants them. Review requests do not authorize edits.
+
 ## Review Workflow
 
 1. Map the code under review to the project's actual layers. Use the local naming, but classify responsibilities as domain, application/use case, interface adapter, infrastructure/framework, and composition.

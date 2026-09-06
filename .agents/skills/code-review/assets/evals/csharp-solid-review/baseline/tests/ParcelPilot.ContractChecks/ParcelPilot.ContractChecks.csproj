@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ParcelPilot.Application\ParcelPilot.Application.csproj" />
+    <ProjectReference Include="..\..\src\ParcelPilot.Domain\ParcelPilot.Domain.csproj" />
+    <ProjectReference Include="..\..\src\ParcelPilot.Infrastructure\ParcelPilot.Infrastructure.csproj" />
+  </ItemGroup>
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+</Project>

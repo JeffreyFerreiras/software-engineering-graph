@@ -171,17 +171,30 @@ def validate_openai_metadata(skill_dir: Path, skill_name: str | None, issues: li
 
 
 def validate_resource_references(skill_dir: Path, body: str, issues: list[Issue]) -> None:
-    references = set(RESOURCE_REFERENCE_PATTERN.findall(body))
-    references.update(MARKDOWN_LINK_PATTERN.findall(body))
-    for reference in sorted(references):
-        normalized = reference.split("#", 1)[0].strip().replace("\\", "/")
-        if not normalized or normalized.startswith(("/", "~", "$")):
+    pending = [(skill_dir / "SKILL.md", body)]
+    visited: set[Path] = set()
+    while pending:
+        document, content = pending.pop()
+        if document.resolve() in visited:
             continue
-        if not normalized.startswith(("scripts/", "references/", "assets/")):
-            continue
-        target = skill_dir / normalized
-        if not target.exists():
-            add_issue(issues, "error", "missing-resource", skill_dir / "SKILL.md", f"Referenced resource does not exist: {normalized}")
+        visited.add(document.resolve())
+        references = set(RESOURCE_REFERENCE_PATTERN.findall(content))
+        references.update(MARKDOWN_LINK_PATTERN.findall(content))
+        for reference in sorted(references):
+            normalized = reference.split("#", 1)[0].strip().replace("\\", "/")
+            if not normalized or normalized.startswith(("/", "~", "$")) or ":" in normalized or "<" in normalized:
+                continue
+            target = (document.parent / normalized).resolve()
+            if not target.is_relative_to(skill_dir.resolve()):
+                add_issue(issues, "error", "resource-outside-skill", document, f"Bundled reference escapes skill: {normalized}")
+                continue
+            if not target.exists():
+                add_issue(issues, "error", "missing-resource", document, f"Referenced resource does not exist: {normalized}")
+            elif target.suffix.lower() == ".md" and target.is_file():
+                try:
+                    pending.append((target, target.read_text(encoding="utf-8")))
+                except (OSError, UnicodeError) as error:
+                    add_issue(issues, "error", "unreadable-resource", target, str(error))
 
 
 def validate_python(skill_dir: Path, issues: list[Issue]) -> None:
@@ -248,6 +261,10 @@ def validate_cursor_cloud_discovery(repository_root: Path, skills_root: Path, sk
     content under skills/ and exposes it through .cursor/skills.
     """
     discovery_path = repository_root / ".cursor" / "skills"
+    # Git can materialize its tracked symlink as a text file on Windows.
+    fallback = repository_root / ".agents" / "skills"
+    if discovery_path.is_file() and discovery_path.read_text(encoding="utf-8").strip() == "../skills" and fallback.is_dir():
+        discovery_path = fallback
     if not discovery_path.exists():
         add_issue(
             issues,
@@ -291,6 +308,10 @@ def validate_cursor_cloud_discovery(repository_root: Path, skills_root: Path, sk
                 discovery_path,
                 "`.cursor/skills` does not match the canonical skills root (" + "; ".join(details) + ").",
             )
+        for name in sorted(skill_names & discovered_names):
+            if tree_digest(discovery_path / name) != tree_digest(skills_root / name):
+                add_issue(issues, "error", "cursor-skills-content-drift", discovery_path / name,
+                          "Discovery copy differs from the canonical skill content.")
 
 
 def tree_digest(root: Path) -> str:
@@ -331,6 +352,9 @@ def audit_repository(root: Path, profile_root: Path | None = None) -> Audit:
         return Audit(root=str(root), skills=0, issues=issues)
 
     skill_dirs = sorted(path for path in skills_root.iterdir() if path.is_dir() and (path / "SKILL.md").is_file())
+    for path in sorted(skills_root.iterdir()):
+        if path.is_dir() and not path.name.startswith(".") and not (path / "SKILL.md").is_file():
+            add_issue(issues, "error", "missing-skill-entrypoint", path, "Skill directory is missing SKILL.md.")
     if not skill_dirs:
         add_issue(issues, "error", "no-skills", skills_root, "No skill folders containing SKILL.md were found.")
     descriptions: dict[str, str] = {}

@@ -5,6 +5,8 @@ description: Create an evidence-backed daily review for the local knowledge vaul
 
 # Review the Knowledge Vault by Day
 
+Use the vault's `.venv/Scripts/python.exe` on Windows or `.venv/bin/python` on Unix for vault commands. If it is missing, report the setup requirement instead of silently using system Python.
+
 1. Locate the repository root containing `AGENTS.md` and `vault.config.json`, then read
    `AGENTS.md` completely.
 2. Use the date or scope supplied by the user; otherwise use the vault's local date.

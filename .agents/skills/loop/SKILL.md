@@ -1,6 +1,6 @@
 ---
 name: loop
-description: Run bounded Plan, Write, and Review repair cycles with one confined Writer and a fresh, independently enforced-read-only Reviewer for each pass. Use software-engineering-graph instead when work needs broader multi-role design, architecture, security, release, or organizational orchestration.
+description: Run strict bounded Plan, Write, and Review repair cycles when an enforcing runtime provides confined identities, revocable writes, read-only review, and atomic checkpoints. Use for explicitly requested strict repair loops; ordinary refactoring does not require this protocol. Use software-engineering-graph for broader multi-role orchestration.
 ---
 
 # Loop
@@ -8,6 +8,8 @@ description: Run bounded Plan, Write, and Review repair cycles with one confined
 Run a fail-closed `Plan -> Write -> Review -> repair or stop` loop. The Supervisor coordinates the protocol only: it never edits the candidate, substitutes its own review, or approves on behalf of the Reviewer. Its runtime or profile must enforce coordinator-only authority that denies repository or filesystem mutation and every non-orchestration side effect; if that enforcement is not proven, block before writing.
 
 ## Plan
+
+First inspect the runtime's documented capability evidence: coordinator-only authority, a scoped Writer allowlist, write revocation, isolated verification outputs, read-only Reviewer tools, atomic checkpoint comparison, and authenticated control/receipt channels. This skill supplies the protocol, not an enforcement adapter. Ordinary collaboration tools or role prompts alone do not establish these guarantees. Name the missing capability and the exact blocking instruction when unsupported; continue unrelated authorized work. Do not silently substitute a weaker loop.
 
 Before granting write access:
 
@@ -31,9 +33,9 @@ Do not let validation or review overlap any active write capability.
 
 ## Validate
 
-After Writer revocation, dispatch a trusted non-Writer verifier with enforced read-only access. Its runtime sandbox must use a sanitized environment, limit file reads to the evidence necessary for the frozen checks, expose no credentials or secrets, deny outbound network and external messaging, and provide no side-effecting tools. Unsupported enforcement blocks. Run the frozen commands exactly, in the frozen order, and require zero exit status for every command.
+After Writer revocation, dispatch a trusted non-Writer verifier with enforced read-only access to the candidate. Its runtime sandbox must use a sanitized environment, limit file reads to the evidence necessary for the frozen checks, expose no credentials or secrets, deny outbound network and external messaging, and confine build/temp writes to disposable outputs declared in the frozen plan. No candidate or external-state mutation is permitted. Unsupported enforcement blocks. Run the frozen commands exactly, in the frozen order, and require zero exit status for every command.
 
-Bind each validation receipt to one use and to the current candidate digest. Include the verifier identity, exact command, order, exit status, relevant output or evidence digest, and candidate digest. Block if provenance is unsupported, a receipt is missing or mismatched, a command fails, or validation can mutate the repository or other state.
+Bind each validation receipt to one use and to the current candidate digest. Include the verifier identity, exact command, order, exit status, relevant output or evidence digest, and candidate digest. Block if provenance is unsupported, a receipt is missing or mismatched, a command fails, or validation can mutate state outside its declared disposable outputs.
 
 ## Review
 

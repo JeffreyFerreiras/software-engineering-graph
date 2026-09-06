@@ -10,7 +10,7 @@ import json
 import os
 import shutil
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Iterable
 
 
@@ -210,7 +210,7 @@ def paths_identical(source: Path, target: Path) -> bool:
 
 
 def backup_path(target: Path) -> Path:
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     backup_dir = target.parent / ".sync-agent-skills-backups"
     return backup_dir / f"{target.name}.{stamp}"
 
@@ -302,9 +302,21 @@ def sync_skills_from_master(
 
 
 def copy_source(source: Path, target_root: Path, target_name: str | None, apply: bool, force: bool) -> dict[str, object]:
+    name = target_name if target_name is not None else source.name
+    if (not name or name in {".", ".."} or name != name.rstrip(" .")
+            or any(character in name for character in '/\\:<>"|?*')
+            or any(ord(character) < 32 for character in name) or PureWindowsPath(name).is_reserved()):
+        raise ValueError("target name must be a single non-reserved filename")
+    source = source.expanduser().absolute()
+    reject_link_paths(source)
     source = source.expanduser().resolve()
     target_root = target_root.expanduser().resolve()
-    target = target_root / (target_name or source.name)
+    target = target_root / name
+    reject_link_paths(target)
+    if not target.resolve().is_relative_to(target_root) or target.resolve() == target_root:
+        raise ValueError("target must stay strictly inside target root")
+    if source != target and (source.is_relative_to(target) or target.is_relative_to(source)):
+        raise ValueError("source and target trees must not overlap")
     result: dict[str, object] = {
         "source": str(source),
         "target": str(target),
@@ -315,6 +327,11 @@ def copy_source(source: Path, target_root: Path, target_name: str | None, apply:
 
     if not source.exists():
         raise FileNotFoundError(f"source does not exist: {source}")
+    if source.is_dir() and (source / "external-source.json").is_file():
+        result["actions"].append("externally managed skill; use its dependency resolver instead of mirroring")
+        return result
+    backup_root = target.parent / ".sync-agent-skills-backups"
+    reject_link_paths(backup_root)
     if not target_root.exists():
         result["actions"].append(f"create directory {target_root}")
         if apply:
@@ -340,6 +357,19 @@ def copy_source(source: Path, target_root: Path, target_name: str | None, apply:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
     return result
+
+
+def reject_link_paths(path: Path) -> None:
+    """Copies and backup moves must not traverse symlinks or Windows junctions."""
+    for candidate in (path, *path.parents):
+        if candidate.is_symlink() or candidate.is_junction():
+            raise ValueError(f"link or junction is not a supported sync target/source: {candidate}")
+    if path.is_dir():
+        for directory, subdirectories, files in os.walk(path, followlinks=False):
+            for name in subdirectories + files:
+                candidate = Path(directory) / name
+                if candidate.is_symlink() or candidate.is_junction():
+                    raise ValueError(f"link or junction inside sync tree: {candidate}")
 
 
 def strip_json_comments(text: str) -> str:

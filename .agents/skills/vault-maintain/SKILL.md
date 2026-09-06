@@ -5,9 +5,13 @@ description: Audit and safely maintain the local knowledge vault. Use when the u
 
 # Maintain the Knowledge Vault
 
+Select audit or repair mode from the user's request. Audits, checks, and diagnosis are read-only: report evidence and proposed repairs without checkpoints, note edits, or index refreshes. Apply the write steps below only when repair or maintenance is authorized. Run read-only validation in audit mode, or report that the available validator requires writes.
+
+Use the vault's `.venv/Scripts/python.exe` on Windows or `.venv/bin/python` on Unix for every vault command. If it is missing, report the setup requirement instead of silently using system Python. Create a checkpoint only when the vault's actual repository rules require one for the authorized writes.
+
 1. Locate the repository root containing `AGENTS.md` and `vault.config.json`, then read
    `AGENTS.md` completely.
-2. Inspect Git status and create the required local checkpoint before broad work.
+2. Inspect Git status and follow any applicable checkpoint rule before authorized broad edits.
 3. Run vault validation and investigate duplicate stable IDs, near-duplicate titles or
    aliases, broken links, orphaned generated notes, missing source references, stale
    summaries, contradictions, and map or graph-index drift.

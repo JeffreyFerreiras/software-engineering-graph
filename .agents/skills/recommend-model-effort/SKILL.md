@@ -30,7 +30,7 @@ Assess the task without performing it unless the user also asks for execution. R
 - **High:** Use for complex debugging, design, refactoring, or analysis that requires reconciling several constraints, exploring plausible alternatives, or checking cross-component effects.
 - **Xhigh:** Use for genuinely difficult, uncertain, long-horizon, or high-consequence work where deeper search and verification are likely to improve reliability materially.
 - **Max:** Reserve for the hardest quality-first work where marginal reliability matters more than latency or token use and substantial exploration or verification can change the outcome. Do not choose it merely because a task is large.
-- **Ultra:** Use only when Codex exposes it and the difficult task decomposes cleanly into useful parallel workstreams. Treat it as an orchestration choice, not automatically as a tier above max. Avoid it for sequential, tightly coupled, or small tasks.
+- **Ultra:** Use only when the active host exposes it and current host-specific guidance establishes its meaning and appropriate use. Do not infer that it enables delegation or requires parallel work. If its semantics are unavailable, state the uncertainty and recommend another supported level from the task demands.
 
 Task length, file count, or tool count alone never justifies high effort. Easy-to-test bulk work can remain low or medium. A short task can warrant xhigh or max when a subtle error would be costly and hard to detect.
 

@@ -37,7 +37,7 @@ Before network-dependent CLI work, confirm `gh auth status`. Follow the active e
 - If review comments conflict with each other or would cause a behavioral regression, surface the tradeoff before making changes.
 - If a comment is ambiguous, ask for clarification or draft a proposed response instead of guessing.
 - Do not treat flat PR comments from the connector as a complete representation of review-thread state.
-- If `gh` hits auth or rate-limit issues mid-run, ask the user to re-authenticate and retry.
+- For an authentication failure, verify `gh auth status` and request login only when credentials are invalid. For rate limits, inspect retry/reset information, use another authorized read surface if sufficient, or report the reset time. Retry a transient read failure at most twice; do not loop on authentication or rate limits.
 
 ## Fallback
 

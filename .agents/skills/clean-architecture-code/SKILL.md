@@ -9,6 +9,8 @@ description: Write, refactor, or extend production code using Clean Architecture
 
 Use Clean Architecture as a constraint on implementation, not as ceremony. Keep business rules independent, let application use cases coordinate workflows, and push frameworks, databases, UI, network, filesystem, and SDK details outward.
 
+Use this workflow when the change involves architectural boundaries. For a local naming or readability refactor without boundary changes, use `clean-code`; for review without edits, use `clean-architecture-review`.
+
 ## Workflow
 
 1. Inspect the existing structure before editing. Identify the current layer names and local conventions; do not impose a four-folder template if the project already has a clear equivalent.

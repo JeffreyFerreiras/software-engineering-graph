@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "Critical",
+              "High",
+              "Medium",
+              "Low"
+            ]
+          },
+          "file": {
+            "type": "string",
+            "minLength": 1
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "correctness",
+              "security",
+              "performance",
+              "maintainability",
+              "pattern opportunity",
+              "SOLID principle"
+            ]
+          },
+          "principle": {
+            "type": "string",
+            "enum": [
+              "",
+              "Single Responsibility Principle",
+              "Open/Closed Principle",
+              "Liskov Substitution Principle",
+              "Interface Segregation Principle",
+              "Dependency Inversion Principle"
+            ]
+          },
+          "pattern": {
+            "type": "string"
+          },
+          "trigger": {
+            "type": "string",
+            "minLength": 1
+          },
+          "impact": {
+            "type": "string",
+            "minLength": 1
+          },
+          "remediation": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "title",
+          "severity",
+          "file",
+          "line",
+          "category",
+          "principle",
+          "pattern",
+          "trigger",
+          "impact",
+          "remediation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "residual_risks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "findings",
+    "open_questions",
+    "residual_risks"
+  ],
+  "additionalProperties": false
+}

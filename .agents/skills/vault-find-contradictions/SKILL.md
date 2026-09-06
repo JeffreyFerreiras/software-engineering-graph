@@ -5,6 +5,8 @@ description: Find and record dated contradictions, changed beliefs, preference s
 
 # Find Knowledge Vault Contradictions
 
+Use the vault's `.venv/Scripts/python.exe` on Windows or `.venv/bin/python` on Unix for vault commands. If it is missing, report the setup requirement instead of silently using system Python.
+
 1. Locate the repository root containing `AGENTS.md` and `vault.config.json`, then read
    `AGENTS.md` completely.
 2. Apply any user-supplied topic or date range; otherwise examine the maintained vault.

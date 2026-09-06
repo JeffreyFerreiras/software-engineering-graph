@@ -18,6 +18,17 @@ description: Review local Git changes, a commit range, or a supplied diff for co
 
 Do not edit files during a review-only request.
 
+## Review Coverage Loop
+
+For non-trivial diffs, use a bounded internal coverage loop:
+
+1. Partition the change into coherent review units and keep a private coverage ledger for changed behavior, affected callers and contracts, validation evidence, and each SOLID principle.
+2. In the first pass, inspect every unit against the Review Checks. Give each ledger entry an evidence-backed disposition: finding, no finding, or unresolved. A SOLID entry is complete only after considering both its cues and guardrails.
+3. If a finding exposes an uninspected caller, contract, or failure path, or any ledger entry remains unresolved, perform one targeted follow-up pass over only those gaps.
+4. Stop when every entry has a disposition and the latest pass adds no actionable evidence, or after two passes. Report unresolved gaps as open questions or residual risk.
+
+Do not repeat the same scan, lower the evidence threshold to fill the ledger, or expose the ledger in the final answer unless the user asks for it. The three-pressure limit in the Pattern Graph Check applies across the entire review, not once per pass.
+
 ## Review Checks
 
 - Correctness, edge cases, error paths, concurrency, and state transitions.
@@ -32,7 +43,7 @@ Do not edit files during a review-only request.
 
 ## SOLID Principle Check
 
-Treat each principle match as a hypothesis, not an automatic finding. Report it only when the diff demonstrates a concrete correctness, comprehension, or maintenance cost:
+Treat each principle match as a hypothesis, not an automatic finding. The coverage loop must consider all five principles, but report one only when the diff demonstrates a concrete correctness, comprehension, or maintenance cost:
 
 - **Single Responsibility Principle (SRP):** require distinct responsibilities or reasons to change in the same unit and show the resulting change coupling, coordination burden, or regression risk. Do not infer a violation from file size, method count, or multiple collaborators alone.
 - **Open/Closed Principle (OCP):** require demonstrated recurring friction when extending behavior, such as repeated edits to a central branch or repeated modification of stable policy. Do not recommend extensibility for hypothetical variants.

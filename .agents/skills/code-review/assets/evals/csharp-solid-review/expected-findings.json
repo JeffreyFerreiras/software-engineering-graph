@@ -1,0 +1,67 @@
+{
+  "must_find": [
+    {
+      "id": "srp-shipment-workflow-mixes-policy-and-presentation",
+      "principle": "Single Responsibility Principle",
+      "files_any": [
+        "src/ParcelPilot.Application/ShipmentWorkflow.cs"
+      ]
+    },
+    {
+      "id": "ocp-shipping-method-extension-edits-repeated-switches",
+      "principle": "Open/Closed Principle",
+      "files_any": [
+        "src/ParcelPilot.Application/ShippingPolicy.cs"
+      ]
+    },
+    {
+      "id": "lsp-local-pickup-rejects-valid-supported-shipment",
+      "principle": "Liskov Substitution Principle",
+      "files_any": [
+        "src/ParcelPilot.Infrastructure/Rates/LocalPickupRateCalculator.cs"
+      ]
+    },
+    {
+      "id": "isp-label-consumer-depends-on-inapplicable-device-operations",
+      "principle": "Interface Segregation Principle",
+      "files_any": [
+        "src/ParcelPilot.Application/Devices/IFulfillmentDevice.cs",
+        "src/ParcelPilot.Application/Devices/LabelService.cs",
+        "src/ParcelPilot.Infrastructure/Devices/WarehouseFulfillmentDevice.cs"
+      ]
+    },
+    {
+      "id": "dip-dispatch-handler-constructs-file-audit-detail",
+      "principle": "Dependency Inversion Principle",
+      "files_any": [
+        "src/ParcelPilot.Application/DispatchShipmentHandler.cs",
+        "src/ParcelPilot.Application/Audit/FileShipmentAuditLog.cs"
+      ]
+    }
+  ],
+  "must_not_find": [
+    {
+      "id": "srp-data-only-shipment-summary",
+      "principle": "Single Responsibility Principle",
+      "files_any": [
+        "src/ParcelPilot.Application/ShipmentSummary.cs"
+      ]
+    },
+    {
+      "id": "ocp-stable-retry-policy-switch",
+      "principle": "Open/Closed Principle",
+      "files_any": [
+        "src/ParcelPilot.Application/RetryPolicy.cs"
+      ]
+    }
+  ],
+  "optional_findings": [
+    {
+      "id": "strategy-for-shipping-policy-variation",
+      "pattern": "Strategy",
+      "files_any": [
+        "src/ParcelPilot.Application/ShippingPolicy.cs"
+      ]
+    }
+  ]
+}

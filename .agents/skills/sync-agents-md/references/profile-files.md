@@ -10,7 +10,7 @@ Use these locations as search hints, not as a license to overwrite. Confirm actu
 
 ## Codex
 
-- `~/.codex/instructions.md` for global user instructions.
+- `$CODEX_HOME/AGENTS.md` for global instructions, defaulting to `~/.codex/AGENTS.md`. A non-empty `AGENTS.override.md` in the same directory takes precedence. Preserve an explicitly configured alternative rather than assuming `instructions.md` loads automatically.
 - `~/.codex/skills/<skill-name>/SKILL.md` for reusable Codex skills.
 - Repository-local `.codex/` files may exist when a project keeps Codex-specific guidance beside source.
 
@@ -37,7 +37,7 @@ Use these locations as search hints, not as a license to overwrite. Confirm actu
 ## Profile Synchronization
 
 - When synchronizing profile-level agent instructions, choose the priority `AGENTS.md` source, then copy or transform it to profile-level Claude, Cursor, and Codex targets.
-- Default targets are `~/.codex/instructions.md`, `~/.claude/CLAUDE.md`, and `~/.cursor/AGENTS.md`.
+- Default Codex and Claude targets are `~/.codex/AGENTS.md` and `~/.claude/CLAUDE.md`; verify the active Cursor instruction location. Honor `CODEX_HOME` and limit writes to requested tools.
 - Back up existing target files before overwriting them.
 
 ## Repository

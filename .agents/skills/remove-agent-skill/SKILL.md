@@ -7,7 +7,7 @@ description: Remove a named AI agent skill from profile-level Codex, Claude, Cur
 
 ## Overview
 
-Remove one skill concept across local agent tool surfaces without deleting unrelated files that merely contain matching words. Prefer inventory, explicit target paths, scoped deletion, and focused repository commits.
+Remove one skill concept from the user-requested surfaces without deleting unrelated files that merely contain matching words. Prefer inventory, explicit target paths, and scoped deletion.
 
 ## Workflow
 
@@ -23,9 +23,8 @@ Remove one skill concept across local agent tool surfaces without deleting unrel
 5. Before writes, state each target path and whether it will be removed. If matches include ambiguous files, explain which are active targets and which are ignored.
 6. Remove only confirmed active skill artifacts. Verify resolved paths stay inside the intended roots before recursive deletion.
 7. Validate with another active-path search for the skill name and aliases.
-8. In the repo, stage only the removed skill folder or directly related prompt files. Do not stage unrelated existing edits.
-9. Commit the repo removal with a focused message such as `Remove <skill-name> skill`.
-10. Push to `origin master` when the repo mirror is part of the requested sync.
+8. Stage or commit only when requested or already authorized. Include only the removed skill folder and directly related catalog or prompt updates.
+9. Push only when publication is requested or already authorized. Resolve the intended remote and branch; never assume `master` or force-push.
 
 ## Search Guidance
 
@@ -51,9 +50,20 @@ Then run a scoped content search against active roots. Treat matches in caches, 
 When using PowerShell, resolve and check each target before deletion:
 
 ```powershell
-$resolved = (Resolve-Path -LiteralPath $target).Path
-if (-not $resolved.StartsWith($allowedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+$rootPath = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $allowedRoot).Path).TrimEnd([IO.Path]::DirectorySeparatorChar)
+$resolved = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $target).Path)
+$prefix = $rootPath + [IO.Path]::DirectorySeparatorChar
+if (-not $resolved.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
   throw "Refusing to remove outside allowed root: $resolved"
+}
+$candidatePath = $resolved
+while ($candidatePath) {
+  $candidate = Get-Item -LiteralPath $candidatePath -Force
+  if ($candidate.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Refusing deletion through a link or junction.' }
+  $candidatePath = Split-Path -Path $candidatePath -Parent
+}
+if (Get-ChildItem -LiteralPath $resolved -Recurse -Force | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }) {
+  throw 'Refusing recursive deletion of a tree containing links or junctions.'
 }
 Remove-Item -LiteralPath $resolved -Recurse -Force
 ```
@@ -66,5 +76,5 @@ Confirm:
 
 - active tool roots no longer contain the skill folder, prompt, command, or instruction file;
 - scoped content search no longer finds active references;
-- `git diff --cached` contains only the intended repo mirror deletion;
+- when staging was authorized, `git diff --cached` contains only the intended repo mirror deletion and related catalog updates;
 - unrelated worktree changes remain unstaged and are reported separately.

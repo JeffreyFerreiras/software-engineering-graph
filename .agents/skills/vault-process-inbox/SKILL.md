@@ -7,9 +7,11 @@ description: Deterministically process the local knowledge vault Inbox, then inv
 
 ## Establish scope
 
+Use the vault's `.venv/Scripts/python.exe` on Windows or `.venv/bin/python` on Unix for every `python` command below. If it is missing, report the setup requirement instead of silently using system Python.
+
 1. Locate the repository root containing `AGENTS.md` and `vault.config.json`.
 2. Read `AGENTS.md` completely and work only inside that vault root.
-3. Inspect Git status and create the required local checkpoint before broad edits.
+3. Inspect Git status and create a local checkpoint before broad edits only when the vault's repository rules require it.
 4. Inspect every file under `Inbox/` and report unsupported or risky formats.
 
 ## Process and verify

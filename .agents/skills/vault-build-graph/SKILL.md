@@ -11,6 +11,8 @@ the work can resume without rereading completed sections.
 
 ## Workflow
 
+Use the vault's `.venv/Scripts/python.exe` on Windows or `.venv/bin/python` on Unix for every `python` command below. If it is missing, report the setup requirement instead of silently using system Python.
+
 1. Locate the vault root containing `AGENTS.md` and `vault.config.json`, read
    `AGENTS.md` completely, and inspect Git status before making broad edits.
 2. Refresh the derived graph index, then identify the requested sources or the most

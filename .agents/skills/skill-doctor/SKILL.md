@@ -21,12 +21,14 @@ Use `--json` for automation and `--strict` when warnings must also fail the comm
 
 ## Validation Policy
 
-- Require `SKILL.md` frontmatter with only `name` and `description`.
+- For this repository's local schema, require `SKILL.md` frontmatter with only `name` and `description`. This is not a claim that other Codex skills cannot use optional metadata.
 - Require the folder name and frontmatter name to match.
 - Require `agents/openai.yaml` with matching UI metadata.
-- Verify referenced `scripts/`, `references/`, and `assets/` files exist and the README catalog matches the skill folders.
+- Verify local resource links recursively, including cycles, and require the README catalog to match skill folders. Flag folders missing SKILL.md and copied discovery trees with content drift.
 - Compile Python sources without writing bytecode.
 - Flag unresolved placeholders, machine-specific paths, and highly similar trigger descriptions.
 - Compare complete skill-folder content when a profile root is supplied, excluding generated cache files.
 
 The validator is read-only. Do not automatically rewrite skills or synchronize profiles as part of diagnosis.
+
+Structural success is not a behavioral approval. For instruction audits, review source/target scope, existing authorization, publication defaults, external dependencies, runtime requirements, and semantic trigger overlap. Use the repository's behavioral scenarios when testing these decisions; do not infer safety from zero lexical-overlap warnings.

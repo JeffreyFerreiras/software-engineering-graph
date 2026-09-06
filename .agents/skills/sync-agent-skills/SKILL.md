@@ -1,13 +1,17 @@
 ---
 name: sync-agent-skills
-description: Audit, compare, and synchronize profile-level AI agent skills, instructions, prompts, and rules across Codex, Claude, Cursor, and VS Code. Use when the user asks to sync agent skills/configs between `.codex`, `.claude`, `.cursor`, VS Code/Copilot profile locations, or wants an inventory, migration, backup, or consistency check for personal agent capability files.
+description: Audit, compare, and synchronize AI agent skills across installed profiles and local Git repositories/worktrees for Codex, Claude, Cursor, and VS Code. Use for skill sync, inventory, migration, backup, or consistency checks. An unqualified sync includes both profile and repository installations; honor explicit narrower targets.
 ---
 
 # Sync Agent Skills
 
 ## Overview
 
-Coordinate profile-level agent capability files across local assistants while preserving each tool's native format and avoiding destructive overwrites.
+Coordinate profile and repository skill installations across local assistants while preserving each tool's native format and avoiding destructive overwrites.
+
+An unqualified request to sync skills includes installed profiles and local Git repositories/worktrees. Do not finish after profile sync alone. A request naming only one profile or repository stays limited to that target.
+
+Use this skill for skill folders and their discovery settings. Use `sync-agents-md` for instruction-document synchronization. Restrict writes to the requested tools and roots; an inventory does not authorize synchronization.
 
 Prefer an inventory-first workflow. Treat `.codex/skills`, `.claude`, `.cursor`, and VS Code user-profile files as user-owned configuration unless the user explicitly asks to replace or normalize them.
 
@@ -23,7 +27,8 @@ When updating installed skills in local project repositories (such as `.cursor/s
 
 1. Locate the relevant roots before editing:
    - Master repository: discover or clone `https://github.com/JeffreyFerreiras/ai-skills.git` (or the local checkout of `ai-skills`).
-   - Installed repository roots: inspect the target repository for `.cursor/skills`, `.agents/skills`, `.codex/skills`, `.claude/skills`, `.github/skills`, or `skills/`.
+   - Installed repository roots: for broad sync, discover repositories beneath the user's known checkout directories (infer from the current checkout or saved projects) and registered worktrees from `git worktree list --porcelain`. Search to a bounded depth, skip caches/build outputs, and report the searched roots and any limits rather than scanning the whole machine. Recognize both `.git` directories and worktree `.git` files.
+   - Inspect each discovered repository for `.cursor/skills`, `.agents/skills`, `.codex/skills`, `.claude/skills`, `.github/skills`, or `skills/`. Deduplicate resolved roots and exclude the canonical source tree itself. Include worktrees with installed copies; do not create skill folders in repositories that have none.
    - Profile roots:
      - Codex: `$CODEX_HOME/skills` when set, otherwise `~/.codex/skills`.
      - Claude: `~/.claude` and skill/instruction subfolders.
@@ -39,7 +44,10 @@ When updating installed skills in local project repositories (such as `.cursor/s
    - Claude commonly uses project/user instructions, commands, or skill-like markdown assets depending on the installed product surface.
 6. Before writes, state the target paths and whether the operation will copy, transform, or replace files.
 7. Preserve existing files with timestamped backups before replacement.
+   - Read each target repository's applicable instructions and Git status. Preserve unrelated edits and repository-only skills. Show differing installed skill paths in the dry run; a broad sync authorizes updating those copies from the canonical source with recoverable backups.
+   - Keep backups outside consumer repositories when their hygiene rules prohibit generated artifacts. Do not stage, commit, push, switch consumer branches, or update their application code as part of sync unless separately requested.
 8. Validate by re-running inventory and, where applicable, checking that generated markdown/frontmatter is syntactically valid.
+   - Verify both profile and repository copies against the source. Report counts for updated profiles, repositories/worktrees, skipped external skills, and any inaccessible or excluded roots. State explicitly if either profile or repository synchronization remains incomplete.
 9. When the user asks to update installed skills in a local repository or profile from master:
    - Identify the local `ai-skills` checkout (`https://github.com/JeffreyFerreiras/ai-skills.git`).
    - Run `sync_agent_skills.py sync-from-master --master <ai-skills-path> --target-repo <target-repo-path>` or `--target-root <target-skills-path>`.
@@ -87,6 +95,8 @@ python <skill-dir>\scripts\sync_agent_skills.py sync --source "$HOME\.codex\skil
 ```
 
 The script does not convert formats. Use it to inventory, compare checksums, and copy a finalized artifact after deciding that a direct copy is appropriate.
+
+Target names must be single filenames. The helper rejects overlapping trees, linked source/target entries, and linked backup paths. Skills with `external-source.json` are reported and skipped even with `--force`; use their dependency resolver rather than replacing an installed engine with a stub.
 
 ## Repository and Profile Update from Master
 
