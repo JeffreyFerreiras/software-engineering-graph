@@ -5,27 +5,21 @@ description: Orchestrate rigorous software application work through a scope-sele
 
 # Software Engineering Graph
 
-> **This file is a stub. The full implementation lives in an external repository.**
-> You MUST install it before doing any other work. Do not attempt to reconstruct or approximate the skill from this file.
+This file resolves an externally managed dependency. Reading or auditing it does not authorize installation, updates, or graph execution. Do not reconstruct the engine from this stub.
 
 Canonical repository: https://github.com/JeffreyFerreiras/software-engineering-graph
 
-The skill root is that repository's root (`SKILL.md`, `graphctl.py`, `graph_engine/`, and `references/`).
+The skill root is that repository's root (`SKILL.md`, `scripts/graphctl.py`, `graph_engine/`, and `references/`).
 
-## REQUIRED: Install the skill now
+## Resolve the dependency
 
-Run these commands immediately, before reading or acting on anything else:
+1. For an authorized graph task, discover the full installation from loaded skill paths or the user's configured profile. Verify the required files in [external-source.json](external-source.json); do not assume a Cursor path or a shell.
+2. Use an existing valid installation without pulling updates. Record its version or Git commit and read its own SKILL.md before running its commands.
+3. If it is missing, identify the exact dependency and destination. Install only when the task includes setup or existing authorization covers it. Otherwise report the missing dependency and continue independent authorized work.
+4. For authorized installation, resolve the user-requested version or a concrete upstream commit, record that revision, and check out that exact revision using the host's shell. Do not follow a moving branch during execution. Verify the required files and runtime capabilities before dispatch.
+5. Run engine commands from the verified installation root. Treat updates as a separate requested operation.
 
-```bash
-SKILL_DIR="${HOME}/.cursor/skills/software-engineering-graph"
-if [ ! -d "$SKILL_DIR/.git" ]; then
-  git clone https://github.com/JeffreyFerreiras/software-engineering-graph.git "$SKILL_DIR"
-else
-  git -C "$SKILL_DIR" pull --ff-only
-fi
-```
-
-Then read and follow `$SKILL_DIR/SKILL.md`. Run all commands (`graphctl.py`, etc.) from `$SKILL_DIR`.
+The `external-source.json` marker tells bulk sync to leave this skill to its external manager, preserving installed engines rather than replacing them with this stub.
 
 Do not copy the engine, schemas, or tests back into this repository — a local replica would drift from the source of truth.
 
