@@ -8,10 +8,16 @@ import filecmp
 import hashlib
 import json
 import os
+import re
 import shutil
+import stat
+import subprocess
+import tempfile
+import zipfile
 from datetime import datetime
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Iterable
+from urllib.parse import urlsplit
 
 
 INTERESTING_SUFFIXES = {
@@ -261,6 +267,7 @@ def sync_skills_from_master(
     force: bool = False,
     skill_names: Iterable[str] | None = None,
     only_existing: bool = True,
+    backup_root: Path | None = None,
 ) -> list[dict[str, object]]:
     """Update skills in target_root from master_skills_dir."""
     master_skills = list_skills_in_root(master_skills_dir)
@@ -294,6 +301,7 @@ def sync_skills_from_master(
             target_name=name,
             apply=apply,
             force=force,
+            backup_root=backup_root,
         )
         copy_res["skill"] = name
         results.append(copy_res)
@@ -301,7 +309,94 @@ def sync_skills_from_master(
     return results
 
 
-def copy_source(source: Path, target_root: Path, target_name: str | None, apply: bool, force: bool) -> dict[str, object]:
+def run_git(*arguments: str) -> str:
+    result = subprocess.run(
+        ["git", *arguments], capture_output=True, text=True, timeout=120,
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+    )
+    if result.returncode:
+        raise RuntimeError(f"External skill Git operation failed: {arguments[0]}")
+    return result.stdout.strip()
+
+
+def resolve_external_skill(source: Path, destination: Path) -> dict[str, str]:
+    """Materialize one upstream commit without checking out or executing its code."""
+    manifest = json.loads((source / "external-source.json").read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict) or manifest.get("management") != "external":
+        raise ValueError("external-source.json must declare management=external")
+    repository = manifest.get("repository")
+    if not isinstance(repository, str):
+        raise ValueError("External skill repository must be an HTTPS URL")
+    url = urlsplit(repository)
+    if (url.scheme != "https" or not url.hostname or url.username or url.password
+            or url.query or url.fragment or any(c.isspace() for c in repository)):
+        raise ValueError("External skill repository must be an HTTPS URL without credentials")
+    required = manifest.get("required_files")
+    if not isinstance(required, list) or not required:
+        raise ValueError("External skill must declare required_files")
+    for name in required:
+        if (not isinstance(name, str) or not name or "\\" in name or ":" in name
+                or PurePosixPath(name).is_absolute() or ".." in PurePosixPath(name).parts):
+            raise ValueError("External required_files must stay inside the skill")
+    revision = manifest.get("revision")
+    if revision is None:
+        head = run_git("ls-remote", "--", repository, "HEAD").split()
+        revision = head[0] if head else ""
+    if not isinstance(revision, str) or not re.fullmatch(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})", revision):
+        raise ValueError("External revision must resolve to a full Git commit hash")
+    with tempfile.TemporaryDirectory(prefix="skill-upstream-") as temporary:
+        checkout = Path(temporary) / "repository.git"
+        archive = Path(temporary) / "skill.zip"
+        run_git("init", "--bare", str(checkout))
+        run_git("-C", str(checkout), "fetch", "--depth=1", "--no-tags", "--", repository, revision)
+        actual = run_git("-C", str(checkout), "rev-parse", "FETCH_HEAD^{commit}")
+        if actual.lower() != revision.lower():
+            raise ValueError("External checkout does not match the resolved commit")
+        run_git("-C", str(checkout), "archive", "--format=zip", f"--output={archive}", actual)
+        destination.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(archive) as contents:
+            for entry in contents.infolist():
+                path = PurePosixPath(entry.filename)
+                if (path.is_absolute() or ".." in path.parts or "\\" in entry.filename
+                        or ":" in entry.filename or not path.parts
+                        or any(PureWindowsPath(part).is_reserved() or part != part.rstrip(" .")
+                               for part in path.parts)):
+                    raise ValueError("External archive path escapes the skill")
+                # These install repository development skills, not runtime dependencies.
+                if (path.parts[0] in {".git", ".agents", ".cursor", ".codex", ".claude"}
+                        or path.parts[:2] == (".github", "skills")
+                        or "__pycache__" in path.parts):
+                    continue
+                if stat.S_ISLNK(entry.external_attr >> 16):
+                    raise ValueError("External archive contains an unsupported symlink")
+                target = destination.joinpath(*path.parts)
+                if entry.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with contents.open(entry) as incoming, target.open("wb") as outgoing:
+                        shutil.copyfileobj(incoming, outgoing)
+                    if os.name != "nt":
+                        target.chmod(0o755 if entry.external_attr >> 16 & 0o111 else 0o644)
+    if (destination / "external-source.json").exists():
+        raise ValueError("External source resolved to another pointer, not a full skill")
+    if not (destination / "SKILL.md").is_file():
+        raise ValueError("External source has no SKILL.md")
+    skill_text = (destination / "SKILL.md").read_text(encoding="utf-8-sig")
+    frontmatter = re.match(r"\A---\s*\n(.*?)\n---(?:\s|$)", skill_text, re.DOTALL)
+    name_match = re.search(r"^name:\s*([^\n]+)$", frontmatter[1], re.MULTILINE) if frontmatter else None
+    if not name_match or name_match[1].strip().strip("\"'") != source.name:
+        raise ValueError("External skill name does not match the master pointer")
+    missing = [name for name in required if not (destination / name).exists()]
+    if missing:
+        raise ValueError(f"External source is missing required resources: {', '.join(missing)}")
+    provenance = {"repository": repository, "revision": actual}
+    (destination / ".skill-source.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
+    return provenance
+
+
+def copy_source(source: Path, target_root: Path, target_name: str | None, apply: bool, force: bool,
+                backup_root: Path | None = None) -> dict[str, object]:
     name = target_name if target_name is not None else source.name
     if (not name or name in {".", ".."} or name != name.rstrip(" .")
             or any(character in name for character in '/\\:<>"|?*')
@@ -328,10 +423,21 @@ def copy_source(source: Path, target_root: Path, target_name: str | None, apply:
     if not source.exists():
         raise FileNotFoundError(f"source does not exist: {source}")
     if source.is_dir() and (source / "external-source.json").is_file():
-        result["actions"].append("externally managed skill; use its dependency resolver instead of mirroring")
+        if source == target:
+            raise ValueError("Cannot replace the canonical pointer with its resolved installation")
+        with tempfile.TemporaryDirectory(prefix="resolved-skill-") as temporary:
+            resolved = Path(temporary) / name
+            provenance = resolve_external_skill(source, resolved)
+            result = copy_source(resolved, target_root, name, apply, force, backup_root)
+            result["source"] = str(source)
+            result["external_source"] = provenance
+            result["actions"].insert(0, f"resolved {provenance['repository']} at {provenance['revision']}")
         return result
-    backup_root = target.parent / ".sync-agent-skills-backups"
+    backup_root = (backup_root.expanduser().absolute() if backup_root is not None
+                   else target.parent / ".sync-agent-skills-backups")
     reject_link_paths(backup_root)
+    if backup_root.resolve().is_relative_to(target) or backup_root.resolve().is_relative_to(source):
+        raise ValueError("Backup root must be outside source and target")
     if not target_root.exists():
         result["actions"].append(f"create directory {target_root}")
         if apply:
@@ -343,7 +449,7 @@ def copy_source(source: Path, target_root: Path, target_name: str | None, apply:
         if not force:
             result["actions"].append("target differs; rerun with --force to replace with backup")
             return result
-        backup = backup_path(target)
+        backup = backup_root / backup_path(target).name
         result["actions"].append(f"backup {target} to {backup}")
         if apply:
             backup.parent.mkdir(parents=True, exist_ok=True)
@@ -551,6 +657,7 @@ def main() -> int:
     sync_parser.add_argument("--apply", action="store_true", help="Perform changes; default is dry-run")
     sync_parser.add_argument("--force", action="store_true", help="Replace differing target after backing it up")
     sync_parser.add_argument("--json", action="store_true", help="Print JSON")
+    sync_parser.add_argument("--backup-root", type=Path, help="Store recoverable backups outside discovery roots")
 
     vscode_parser = subparsers.add_parser("doctor-vscode", help="Check VS Code agent skill discovery settings")
     vscode_parser.add_argument("--settings", type=Path, help="Path to VS Code settings.json; default is user profile")
@@ -592,6 +699,7 @@ def main() -> int:
     sync_from_master_parser.add_argument("--apply", action="store_true", help="Perform changes; default is dry-run")
     sync_from_master_parser.add_argument("--force", action="store_true", help="Replace differing target after backing it up")
     sync_from_master_parser.add_argument("--json", action="store_true", help="Print JSON")
+    sync_from_master_parser.add_argument("--backup-root", type=Path, help="Store recoverable backups outside discovery roots")
 
     args = parser.parse_args()
     if args.command == "inventory":
@@ -602,7 +710,7 @@ def main() -> int:
         return 0
 
     if args.command == "sync":
-        result = copy_source(args.source, args.target_root, args.target_name, args.apply, args.force)
+        result = copy_source(args.source, args.target_root, args.target_name, args.apply, args.force, args.backup_root)
         if args.json:
             print(json.dumps(result, indent=2))
         else:
@@ -656,6 +764,7 @@ def main() -> int:
                 force=args.force,
                 skill_names=args.skills,
                 only_existing=not args.all,
+                backup_root=args.backup_root,
             )
             all_results.extend(res)
 

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:codex:engineering-graph:review-fanout-request:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "run_id", "parent_branch_id", "parent_attempt_id", "round", "members"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "kind": {"const": "review_fanout_request"},
+    "run_id": {"$ref": "#/$defs/id"},
+    "parent_branch_id": {"$ref": "#/$defs/id"},
+    "parent_attempt_id": {"$ref": "#/$defs/id"},
+    "round": {"type": "integer", "minimum": 1, "maximum": 2},
+    "members": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"$ref": "#/$defs/member"}}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
+    "ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+    "member": {"type": "object", "additionalProperties": false, "required": ["assignment_id", "ordinal", "reason_code", "acceptance_ids", "evidence_ids"], "properties": {"assignment_id": {"$ref": "#/$defs/id"}, "ordinal": {"type": "integer", "minimum": 1}, "reason_code": {"$ref": "#/$defs/id"}, "acceptance_ids": {"$ref": "#/$defs/ids"}, "evidence_ids": {"$ref": "#/$defs/ids"}}}
+  }
+}

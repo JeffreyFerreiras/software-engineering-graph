@@ -37,6 +37,7 @@ When updating installed skills in local project repositories (such as `.cursor/s
 2. Run an inventory and inspect existing formats, names, and duplicate concepts.
 3. When VS Code should see Codex skills, run `doctor-vscode` before troubleshooting content. VS Code does not discover `~/.codex/skills` unless `chat.agentSkillsLocations` includes it.
 4. Decide the direction of sync with the user request as the source of truth. When syncing to local repos or profiles, pull latest versions from the master `ai-skills` repository.
+   - Master skills with `external-source.json` are installation pointers. Resolve the declared repository's latest default-branch commit (or an explicitly pinned `revision`) and install the full skill from that commit. Do not skip the skill, install the pointer itself, or treat an existing installation as current without checking upstream during an authorized sync. Ordinary skill execution does not authorize an update.
 5. Transform content only when needed:
    - Codex skills require a folder with `SKILL.md` frontmatter.
    - Cursor commonly uses rule or instruction files.
@@ -47,7 +48,8 @@ When updating installed skills in local project repositories (such as `.cursor/s
    - Read each target repository's applicable instructions and Git status. Preserve unrelated edits and repository-only skills. Show differing installed skill paths in the dry run; a broad sync authorizes updating those copies from the canonical source with recoverable backups.
    - Keep backups outside consumer repositories when their hygiene rules prohibit generated artifacts. Do not stage, commit, push, switch consumer branches, or update their application code as part of sync unless separately requested.
 8. Validate by re-running inventory and, where applicable, checking that generated markdown/frontmatter is syntactically valid.
-   - Verify both profile and repository copies against the source. Report counts for updated profiles, repositories/worktrees, skipped external skills, and any inaccessible or excluded roots. State explicitly if either profile or repository synchronization remains incomplete.
+   - Verify both profile and repository copies against the source. For external skills, compare against the resolved upstream commit, not the pointer folder, and record repository/revision provenance. Report counts for updated profiles, repositories/worktrees, resolved external skills, and any inaccessible or excluded roots. A failed external resolution is an incomplete sync, not a successful skip.
+   - For Codex targets, also run the [fresh-process discovery check](references/codex-discovery.md) for each affected repository/worktree. Check enabled paths and duplicate names, not just file hashes. After authorized enablement changes, repeat the check in another new process using persisted configuration without command-line overrides.
 9. When the user asks to update installed skills in a local repository or profile from master:
    - Identify the local `ai-skills` checkout (`https://github.com/JeffreyFerreiras/ai-skills.git`).
    - Run `sync_agent_skills.py sync-from-master --master <ai-skills-path> --target-repo <target-repo-path>` or `--target-root <target-skills-path>`.
@@ -96,7 +98,9 @@ python <skill-dir>\scripts\sync_agent_skills.py sync --source "$HOME\.codex\skil
 
 The script does not convert formats. Use it to inventory, compare checksums, and copy a finalized artifact after deciding that a direct copy is appropriate.
 
-Target names must be single filenames. The helper rejects overlapping trees, linked source/target entries, and linked backup paths. Skills with `external-source.json` are reported and skipped even with `--force`; use their dependency resolver rather than replacing an installed engine with a stub.
+Target names must be single filenames. The helper rejects overlapping trees, linked source/target entries, and linked backup paths. For `external-source.json` pointers, it fetches one concrete upstream commit, validates required resources and the skill name, and installs the full skill with a `.skill-source.json` provenance receipt. Resolution failure leaves the existing installation intact. Git metadata, nested assistant discovery roots, and Python bytecode caches are excluded from the installed snapshot.
+
+External resolution also runs during dry runs so the preview can compare the latest content; only temporary staging files are written. The manifest requires an HTTPS `repository`, `management: "external"`, and relative `required_files`. Its optional `revision` must be a full commit hash; otherwise resolve the latest default-branch HEAD. Use `--backup-root <path-outside-skill-discovery>` to keep replaced installations recoverable without adding backup skills to discovery. The canonical master pointer remains unchanged.
 
 ## Repository and Profile Update from Master
 

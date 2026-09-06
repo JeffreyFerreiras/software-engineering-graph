@@ -1,5 +1,0 @@
-{
-  "repository": "https://github.com/JeffreyFerreiras/software-engineering-graph",
-  "required_files": ["SKILL.md", "scripts/graphctl.py", "graph_engine", "references"],
-  "management": "external"
-}

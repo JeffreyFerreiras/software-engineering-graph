@@ -7,6 +7,7 @@ Use this as a starting map, then verify paths on the local machine. Agent produc
 - Git URL: `https://github.com/JeffreyFerreiras/ai-skills.git`
 - Canonical skills tree: `skills/` within the repository root.
 - All skills in profile directories or repository-local folders should sync against this master repository.
+- A master skill containing `external-source.json` points to the actual upstream skill repository. During installation or sync, resolve its latest default-branch commit (or declared pinned revision) and install the full skill with revision provenance. Compare that installation with the resolved source, not the pointer. Do not copy a pointer over an engine or skip it as already current.
 
 ## Repository-Local Skill Roots
 

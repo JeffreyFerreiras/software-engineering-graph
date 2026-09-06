@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:codex:engineering-graph:review-preliminary:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "run_id", "parent_branch_id", "parent_attempt_id", "generation", "findings", "evidence"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "kind": {"const": "review_preliminary"},
+    "run_id": {"$ref": "#/$defs/id"},
+    "parent_branch_id": {"$ref": "#/$defs/id"},
+    "parent_attempt_id": {"$ref": "#/$defs/id"},
+    "generation": {"type": "integer", "minimum": 0},
+    "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}},
+    "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence"}}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "findingId": {"type": "string", "pattern": "^[A-Z][A-Z0-9]*-[0-9]{3,}$"},
+    "evidence": {"type": "object", "additionalProperties": false, "required": ["evidence_id", "kind", "sha256"], "properties": {"evidence_id": {"$ref": "#/$defs/id"}, "kind": {"$ref": "#/$defs/id"}, "sha256": {"$ref": "#/$defs/digest"}}},
+    "finding": {"type": "object", "additionalProperties": false, "required": ["finding_id", "acceptance_id", "location", "defect_id", "summary", "fix_variant", "evidence_ids"], "properties": {"finding_id": {"$ref": "#/$defs/findingId"}, "acceptance_id": {"$ref": "#/$defs/id"}, "location": {"type": "string", "minLength": 1}, "defect_id": {"$ref": "#/$defs/id"}, "summary": {"type": "string", "minLength": 1}, "fix_variant": {"type": "string", "minLength": 1}, "evidence_ids": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}}}
+  }
+}

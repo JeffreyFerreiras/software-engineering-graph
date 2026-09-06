@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "supported_findings": [
+    {
+      "acceptance_id": "AC-CONCURRENCY",
+      "location": "tests/fixtures/reviewer-delegation-csharp/Cache.cs",
+      "defect_id": "UNSYNCHRONIZED_DICTIONARY_UPDATE",
+      "lenses": ["correctness", "security"],
+      "duplicate_source_ids": ["REV-101", "SEC-101"],
+      "incompatible_fix_variants": ["lock the read-modify-write", "replace storage with a concurrency-safe update primitive"]
+    },
+    {
+      "acceptance_id": "AC-TESTS",
+      "location": "tests/fixtures/reviewer-delegation-csharp/WorkerTests.cs",
+      "defect_id": "MISSING_PARALLEL_ASSERTION",
+      "lenses": ["test_adequacy"],
+      "duplicate_source_ids": ["REV-102"],
+      "incompatible_fix_variants": []
+    }
+  ]
+}
