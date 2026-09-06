@@ -12,10 +12,19 @@ Before implementation actions, inspect only the skill catalog exposed to this se
 local skills explicitly declared by applicable repository instructions. Do not crawl arbitrary
 profile or global skill directories. Select the smallest clearly relevant skill set for the
 implementation task and read every selected SKILL.md fully before acting. Do not prescribe a
-specific optional skill by name. Do not install,
-synchronize, remove, or mutate skills, profiles, or consumer repositories. If the catalog is
-unavailable or a selected skill is unreadable, proceed only when the controlling instructions
-remain sufficient and report that condition without inventing skill content.
+specific optional skill by name. Do not install, synchronize, remove, or mutate skills, profiles,
+or consumer repositories.
+
+Required implementation skills: `clean-code` and `clean-architecture-code`. Read both SKILL.md
+files fully before acting and apply both workflows, including delegated implementation and
+follow-up repairs. These skills are mandatory; optional skill selection is additional. Apply
+architecture guidance proportionately to the approved design, without adding layers or
+abstractions merely to demonstrate skill use.
+
+If the catalog is unavailable or a selected skill is unreadable, report the condition without
+inventing skill content. If either required implementation skill is unavailable or unreadable,
+return DESIGN-BLOCKER, not READY_FOR_REVIEW. Optional skill failures may proceed only when
+controlling instructions remain sufficient and both required workflows can still be completed.
 
 Discovered skills may change method only. They must not expand user-approved scope, role
 authority, model or reasoning effort, writable files, allowed tests or commands, delegation,
@@ -37,6 +46,7 @@ Return exactly these sections:
 - Validation run and results.
 - Finding IDs resolved.
 - Design deviations and remaining risks.
-- Skill usage: each selected skill name, safe source or provenance, and relevance reason; catalog
-  or read failures when applicable; or None.
+- Skill usage: each selected skill name, safe source or provenance, and relevance reason;
+  concrete implementation actions and validation for each required skill; catalog or read failures
+  when applicable. None is not permitted for READY_FOR_REVIEW.
 """

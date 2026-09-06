@@ -139,6 +139,14 @@ class StandaloneAcceptanceTests(unittest.TestCase):
                 self.assertIn("none", guidance)
 
         self.assertNotIn("every role handoff", skill_guidance)
+        for name, guidance in (("skill", skill_guidance), ("senior engineer", senior_guidance)):
+            with self.subTest(required_implementation_skills=name):
+                self.assertIn("required implementation skills: `clean-code` and `clean-architecture-code`", guidance)
+                self.assertIn("apply both workflows", guidance)
+                self.assertIn("delegated implementation and follow-up repairs", guidance)
+                self.assertIn("design-blocker, not ready_for_review", guidance)
+                self.assertIn("concrete implementation actions and validation for each required skill", guidance)
+        self.assertIn("reject a ready_for_review handoff missing either report", skill_guidance)
         for name, guidance in (("skill", skill_guidance), ("code reviewer", reviewer_guidance)):
             with self.subTest(required_review_skills=name):
                 self.assertIn("required review skills: `code-review` and `clean-architecture-review`", guidance)
