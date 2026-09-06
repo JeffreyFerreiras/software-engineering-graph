@@ -5,6 +5,15 @@ schema paths in CLI instructions are relative to that root. The entry skill cont
 
 ## Start a run
 
+Before substantive scoping, capture the primary session's usage checkpoint when the host exposes
+the metadata and the explicit file is authorized to read:
+
+`python <skill>/scripts/graphctl.py usage checkpoint --session-log <explicit-file>`
+
+This read-only preflight runs without `--repo`, policy, initialization, or any ledger write. Retain
+only the returned `checkpoint_schema_version: 1`, hashed `source_id`, `offset`, and `prefix_sha256`.
+If no metadata is available, say that token usage is unavailable and continue the approved workflow.
+
 1. Inspect the worktree and create a redacted, immutable task brief matching
    `references/task-brief.schema.json` under a repository-policy artifact root.
 2. Hash the exact `.codex/engineering-graph.json` bytes and put that digest in the brief's
@@ -96,3 +105,68 @@ degraded mode is acceptable. These flags acknowledge platform limitations; they 
 `status --json` is the supported export. Treat it as sensitive operational metadata.
 It also reports schema-6 attempt counts and deterministic UTC wall-clock timing. Retry waits count toward
 branch lifecycle wall time but not active duration or critical-path weight.
+
+## Token accounting at phase handoffs
+
+After initialization, bind the preflight checkpoint to the primary scoping phase:
+
+`python <skill>/scripts/graphctl.py --repo <repo> record usage --run-id <run> --action bind --session-log <file> --phase scoping --generation 0 --start-offset <offset> --source-id <digest> --prefix-sha256 <digest> --op-id <id>`
+
+Supply all three historical fields together. Identity, byte-prefix digest, and snapshot boundary
+must match exactly; a mismatch leaves the ledger unchanged. Omit all three only to begin a new
+baseline at the latest validated cumulative snapshot. A late baseline does not recover earlier
+phases. Offset zero counts the first total only when the validated last usage equals the cumulative
+total; otherwise the unknown prefix stays excluded and coverage is partial.
+
+For an executed branch, replace `--phase` and `--generation` with the exact `--branch-id` and
+`--attempt-id`. The engine derives role, phase, and generation from the attempt. Bind resumed
+sessions separately to that same attempt; retries use their distinct attempt IDs. Bind delegated
+reviewers separately, never copy a child's usage into its parent. A single source cannot have
+overlapping bound intervals within the run. Do not share counted source intervals across runs;
+the engine never searches other runs or sessions to discover ownership.
+
+Collect while work continues and close at a settled checkpoint:
+
+`python <skill>/scripts/graphctl.py --repo <repo> record usage --run-id <run> --action collect --binding-id <binding> --session-log <file> --op-id <id>`
+
+`python <skill>/scripts/graphctl.py --repo <repo> record usage --run-id <run> --action close --binding-id <binding> --session-log <file> --op-id <id>`
+
+Close the current primary phase before binding the next using the returned checkpoint, even when
+both phases share a turn. Use `scoping`, `research_design`, `implementation`, `review_testing`, and
+`closure`, with the applicable generation. Repeated cumulative snapshots and repeated collections
+do not add tokens. The same normalized request/op ID replays its original result; new samples need
+new operation IDs. Accounting mutations remain available in initialized, active, blocked, complete,
+and aborted runs, including late closure metadata, without changing those states or delivery gates.
+
+At every major phase handoff, report `usage.observed_totals`, the current phase, cumulative run
+usage, role/agent usage, and observed model/effort pairs from `status`. Missing telemetry must be
+reported as unavailable. Do not infer actual models from execution-plan assignments. Cached input
+and reasoning output are subsets, cache writes are separate, and the headline is input plus output.
+Read `coverage`, null `complete_totals`, `metric_partial`, missing executed attempts/primary phases,
+open bindings, and unattributed increments before presenting any total as complete. Unexecuted or
+skipped work has no measured consumption; active runs and unfinished responses are provisional.
+
+Ambiguous in-run increments are counted once without guessed phase/model/effort attribution.
+Increments that may include pre-run history are excluded. Resets drop the uncertain bridge while
+retaining earlier observations. Identity changes, rewrites, and truncation retain a disclosed gap
+and require an explicit new binding to replace the source. The final report can itself add tokens
+beyond its last checkpoint. `complete` describes only bounded closed intervals, not all host work.
+
+Missing executed retries keep the relevant role, agent, and generation summaries partial, and
+missing primary phases keep Supervisor summaries partial. Model/effort groups cover observed
+intervals only and expose association coverage; never assign missing usage to a planned model.
+The source's `cache_write_input_tokens` is normalized to `cache_write_tokens` in reports and takes
+precedence over the legacy source alias, even when invalid. Source counters retain signed 64-bit
+bounds; exact aggregate integers can exceed that bound and require integer-preserving consumers.
+Rewritten files retaining the same session ID cannot bind earlier overlapping offsets. Recovery
+requires a new source identity or a later nonoverlapping checkpoint.
+
+Only explicit authorized regular files are read, with 64 MiB/file, 1 MiB/read or record,
+100,000 records/invocation, and depth-24 JSON limits. Symlink/reparse components and changed opened
+file identity are rejected. Opens also request nonblocking mode where supported to prevent a raced
+FIFO replacement from hanging before the opened-file type check. Source IDs and consumed prefixes
+are hashed; raw source paths, conversation content, credentials, and arbitrary source strings never enter usage events or
+responses. Errors are fixed diagnostics. Provenance is a caller association, not host authenticity.
+See [Observed token usage](../README.md#observed-token-usage) for the supported observed JSONL
+shape and report fields. If the host format or metadata is unavailable, keep coverage honest and
+continue the authorized graph workflow without adding an approval gate.

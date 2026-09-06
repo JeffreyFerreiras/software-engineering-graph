@@ -15,6 +15,14 @@ large, select only pertinent roles, assign each possible role a model and reason
 the size, route floor, assignments, and omitted roles to the human. No branch may execute until the
 human explicitly approves that immutable execution plan.
 
+At the start of that preflight, before substantive scoping work, take a read-only
+`usage checkpoint --session-log <explicit primary session file>` when Codex token metadata is
+available. It runs before repository policy or ledger initialization. Retain only its sanitized
+checkpoint fields and bind them to `scoping` after initialization; never count unrelated primary
+thread history. If metadata is unavailable, report token usage as unavailable rather than omitting
+it or inferring consumption from the plan. Read the token-accounting procedure in
+[Ledger operations](references/ledger-operations.md) before collecting metadata.
+
 For new repository implementation work, the Supervisor first performs bounded read-only inspection
 of repository instructions, status, worktree registrations, and the intended base. Within existing
 implementation authority, the Supervisor owns setup: create one new isolated implementation worktree
@@ -71,6 +79,16 @@ Use concise user updates: outcome or current blocker first, then the next action
 protocol packets in artifacts. Before evaluating or changing prompting or catalog defaults, read
 [Behavioral evaluations](references/behavioral-evaluations.md); engine tests alone do not establish
 agent behavior.
+
+At each major phase handoff and in the final response, report observed input/output/total tokens,
+cumulative run usage, and coverage, with role/agent and observed model/effort comparisons when
+available. Use the five accounting phases `scoping`, `research_design`, `implementation`,
+`review_testing`, and `closure`. Close the primary interval and bind the next phase at the returned
+checkpoint; associate each executed branch attempt and separately dispatched child session.
+Report gaps, unavailable phases, and provisional running usage explicitly. Never present a skipped
+role as measured consumption or a partial total as complete. The final response itself may add
+tokens beyond its last checkpoint. Accounting is additive metadata and must not introduce a new
+approval, topology, or delivery gate.
 
 Treat the primary agent as the Supervisor. Keep requirements, decisions, approvals, and user communication in the primary thread. Dispatch the roles required by the selected executable route and synthesize their results. Use the route mapping below; do not remove a mandatory gate to reduce model cost.
 

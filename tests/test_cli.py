@@ -14,6 +14,521 @@ from graph_engine.state import StateError, StateStore
 from tests.test_support import GraphCase
 
 
+class UsageTests(GraphCase):
+    def setUp(self):
+        super().setUp()
+        self.log = self.root / "private-session.jsonl"
+        self.log.write_text("", encoding="utf-8")
+        self.append("session_meta", {"id": "synthetic-session", "cwd": "PRIVATE_SOURCE_PATH"})
+        self.context()
+
+    def append(self, kind, payload):
+        with self.log.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"type": kind, "payload": payload}) + "\n")
+
+    def context(self, model="gpt-6-astra", effort="medium"):
+        self.append("turn_context", {"model": model, "effort": effort})
+
+    def tokens(self, input_count, output_count, last=None, **optional):
+        counters = {"input_tokens": input_count, "output_tokens": output_count,
+                    "total_tokens": input_count + output_count, **optional}
+        self.append("event_msg", {"type": "token_count", "info": {
+            "total_token_usage": counters, "last_token_usage": counters if last is None else {
+                "input_tokens": last[0], "output_tokens": last[1], "total_tokens": sum(last)},
+        }})
+
+    def usage(self, action, op, *arguments):
+        return self.graphctl("record", "usage", "--run-id", "RUN-1", "--action", action,
+                             "--session-log", str(self.log), "--op-id", op, *arguments)
+
+    def bind(self, phase="scoping", op="bind-usage", checkpoint=None, branch=None):
+        arguments = []
+        if branch:
+            arguments.extend(["--branch-id", branch["branch_id"], "--attempt-id", branch["attempt_id"]])
+        else:
+            arguments.extend(["--phase", phase, "--generation", "0"])
+        if checkpoint:
+            arguments.extend(["--start-offset", str(checkpoint["offset"]), "--source-id", checkpoint["source_id"],
+                              "--prefix-sha256", checkpoint["prefix_sha256"]])
+        return self.usage("bind", op, *arguments)
+
+    def collect(self, binding, op="collect-usage", close=False):
+        return self.usage("close" if close else "collect", op, "--binding-id", binding)
+
+    def test_checkpoint_before_policy_or_run_and_historical_bind(self):
+        from graph_engine.cli import execute
+        self.tokens(100, 20)
+        before, code = execute(["usage", "checkpoint", "--session-log", str(self.log)], self.store)
+        self.assertEqual(code, 0)
+        self.assertEqual(before["checkpoint_schema_version"], 1)
+        self.assertNotIn("synthetic-session", json.dumps(before))
+        self.tokens(160, 30, last=(60, 10))
+        self.initialize()
+        result = self.bind(checkpoint=before)
+        self.assertEqual(result["usage"]["observed_totals"]["total_tokens"], 70)
+        self.assertEqual(result["usage"]["model_efforts"]["gpt-6-astra/medium"]["observed_totals"]["total_tokens"], 70)
+        self.assertTrue(result["usage"]["running"])
+        self.assertIsNone(result["usage"]["complete_totals"])
+
+    def test_default_baseline_deduplicates_collects_and_replay_after_append(self):
+        self.tokens(100, 20)
+        self.initialize()
+        binding = self.bind()["binding_id"]
+        self.tokens(120, 25, last=(20, 5), cached_input_tokens=30, reasoning_output_tokens=3)
+        result = self.collect(binding)
+        self.assertEqual(result["usage"]["observed_totals"]["total_tokens"], 25)
+        self.tokens(120, 25, last=(20, 5), cached_input_tokens=30, reasoning_output_tokens=3)
+        again = self.collect(binding, "collect-again")
+        self.assertEqual(again["usage"]["observed_totals"]["total_tokens"], 25)
+        self.tokens(140, 30, last=(20, 5))
+        replay = self.collect(binding)
+        self.assertEqual(replay["code"], "REPLAYED")
+        self.assertEqual(replay["usage"]["observed_totals"]["total_tokens"], 25)
+        with self.assertRaisesRegex(StateError, "OPERATION_CONFLICT"):
+            self.collect(binding, close=True)
+        closed = self.collect(binding, "close", close=True)
+        self.assertEqual(closed["usage"]["observed_totals"]["total_tokens"], 50)
+        self.assertEqual(closed["usage"]["open_bindings"], [])
+
+    def test_source_start_subsets_cache_write_and_unknown_observed_context(self):
+        from graph_engine.ids import sha256_bytes
+        self.tokens(100, 20, cached_input_tokens=40, reasoning_output_tokens=10, cache_write_tokens=12)
+        self.initialize()
+        initial = {"offset": 0, "source_id": sha256_bytes(b"synthetic-session"), "prefix_sha256": sha256_bytes(b"")}
+        binding = self.bind(checkpoint=initial)["binding_id"]
+        result = self.collect(binding, close=True)["usage"]
+        self.assertEqual(result["observed_totals"], {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120,
+                         "cached_input_tokens": 40, "reasoning_output_tokens": 10, "cache_write_tokens": 12})
+        self.assertEqual(result["phases"]["scoping"]["coverage"], "complete")
+        self.assertIsNone(result["phases"]["implementation"]["observed_totals"])
+        self.context("UNCONTROLLED_MODEL_SECRET", "UNCONTROLLED_EFFORT_SECRET")
+        binding = self.bind("implementation", "bind-next")["binding_id"]
+        self.tokens(120, 30, last=(20, 10))
+        result = self.collect(binding, "close-next", close=True)["usage"]
+        self.assertIn("unknown/unknown", result["model_efforts"])
+        self.assertNotIn("UNCONTROLLED", json.dumps(result))
+
+    def test_phase_boundaries_all_five_and_effort_pairs(self):
+        from graph_engine.usage import PHASES
+        self.tokens(10, 1)
+        self.initialize()
+        count = 10
+        for index, phase in enumerate(PHASES):
+            effort = "high" if index % 2 else "medium"
+            self.context(effort=effort)
+            binding = self.bind(phase, "bind-" + phase)["binding_id"]
+            count += 10
+            self.tokens(count, index + 2, last=(10, 1))
+            result = self.collect(binding, "close-" + phase, close=True)["usage"]
+            self.assertEqual(result["phases"][phase]["observed_totals"]["total_tokens"], 11)
+        self.assertEqual(result["observed_totals"]["total_tokens"], 55)
+        self.assertEqual(result["model_efforts"]["gpt-6-astra/medium"]["observed_totals"]["total_tokens"], 33)
+        self.assertEqual(result["model_efforts"]["gpt-6-astra/high"]["observed_totals"]["total_tokens"], 22)
+
+    def test_overlap_rejected_and_cross_boundary_increment_not_double_counted(self):
+        self.tokens(10, 1)
+        self.initialize()
+        binding = self.bind()["binding_id"]
+        with self.assertRaisesRegex(StateError, "USAGE_INTERVAL_OVERLAP"):
+            self.bind("implementation", "overlap")
+        self.tokens(20, 2, last=(10, 1))
+        self.collect(binding, "close", close=True)
+        binding = self.bind("implementation", "next")["binding_id"]
+        self.tokens(40, 4, last=(30, 3))
+        result = self.collect(binding, "close-next", close=True)["usage"]
+        self.assertEqual(result["observed_totals"]["total_tokens"], 33)
+        self.assertEqual(result["unattributed"]["observed_totals"]["total_tokens"], 22)
+        self.assertEqual(result["phases"]["implementation"]["coverage"], "partial")
+
+    def test_ambiguous_prerun_bridge_excluded_and_reset_keeps_prior_usage(self):
+        self.tokens(10, 1)
+        self.initialize()
+        binding = self.bind()["binding_id"]
+        self.tokens(30, 3, last=(30, 3))
+        result = self.collect(binding)["usage"]
+        self.assertEqual(result["observed_totals"]["total_tokens"], 0)
+        self.assertIn("prefix_gap", result["diagnostics"])
+        self.tokens(40, 4, last=(10, 1))
+        self.tokens(5, 1)
+        self.tokens(15, 2, last=(10, 1))
+        result = self.collect(binding, "after-reset", close=True)["usage"]
+        self.assertEqual(result["observed_totals"]["total_tokens"], 22)
+        self.assertIn("counter_reset", result["diagnostics"])
+
+    def test_branch_attempt_association_and_resumed_source(self):
+        self.tokens(10, 1)
+        self.initialize()
+        branch = self.claim_raw()
+        binding = self.bind(branch=branch)["binding_id"]
+        self.tokens(20, 2, last=(10, 1))
+        result = self.collect(binding, close=True)["usage"]
+        self.assertEqual(result["attempts"][branch["attempt_id"]]["observed_totals"]["total_tokens"], 11)
+        self.assertEqual(result["agents"][branch["branch_id"]]["observed_totals"]["total_tokens"], 11)
+        self.log = self.root / "resumed.jsonl"
+        self.append("session_meta", {"id": "resumed-session"})
+        self.context()
+        self.tokens(0, 0)
+        binding = self.bind(op="resume-bind", branch=branch)["binding_id"]
+        self.tokens(10, 1)
+        result = self.collect(binding, "resume-close", close=True)["usage"]
+        self.assertEqual(result["attempts"][branch["attempt_id"]]["observed_totals"]["total_tokens"], 22)
+        self.assertEqual(result["missing_executed_attempts"], [])
+
+    def test_missing_metadata_old_schema_and_late_aborted_run(self):
+        self.initialize()
+        initial = self.graphctl("status", "--run-id", "RUN-1")
+        self.assertEqual(initial["state_schema_version"], 6)
+        self.assertEqual(initial["usage"]["coverage"], "unavailable")
+        self.assertIsNone(initial["usage"]["observed_totals"])
+        branch = self.claim_raw()
+        result = self.graphctl("status", "--run-id", "RUN-1")["usage"]
+        self.assertIn(branch["attempt_id"], result["missing_executed_attempts"])
+        self.tokens(10, 1)
+        binding = self.bind()["binding_id"]
+        self.graphctl("abort", "--run-id", "RUN-1", "--reason-code", "stop", "--authority-ref", "authority:test", "--op-id", "abort")
+        self.tokens(20, 2, last=(10, 1))
+        result = self.collect(binding, close=True)
+        self.assertEqual(result["usage"]["observed_totals"]["total_tokens"], 11)
+        self.assertFalse(result["usage"]["running"])
+        self.assertEqual(self.graphctl("status", "--run-id", "RUN-1")["status"], "aborted")
+
+    def test_checkpoint_mismatch_and_arguments_leave_revision_unchanged(self):
+        from graph_engine.usage import checkpoint
+        self.tokens(10, 1)
+        saved = checkpoint(str(self.log))
+        self.initialize()
+        revision = self.graphctl("status", "--run-id", "RUN-1")["state_revision"]
+        for changed in ({**saved, "offset": 1}, {**saved, "source_id": "a" * 64},
+                        {**saved, "prefix_sha256": "b" * 64}, {**saved, "offset": 1 << 63}):
+            with self.assertRaises(StateError):
+                self.bind(checkpoint=changed)
+        with self.assertRaises(StateError):
+            self.usage("bind", "bad", "--phase", "scoping", "--generation", "0", "--start-offset", "0")
+        with self.assertRaises(ContractError):
+            self.bind(checkpoint={**saved, "prefix_sha256": "PRIVATE_SECRET"})
+        self.assertEqual(self.graphctl("status", "--run-id", "RUN-1")["state_revision"], revision)
+
+    def test_rewritten_or_truncated_prefix_preserves_observed_usage(self):
+        self.tokens(10, 1)
+        self.initialize()
+        binding = self.bind()["binding_id"]
+        self.tokens(20, 2, last=(10, 1))
+        self.collect(binding)
+        original = self.log.read_bytes()
+        self.log.write_bytes(original.replace(b"PRIVATE_SOURCE_PATH", b"ALTERED_SOURCEPATHX"))
+        result = self.collect(binding, "rewritten")["usage"]
+        self.assertEqual(result["observed_totals"]["total_tokens"], 11)
+        self.assertIn("prefix_changed", result["diagnostics"])
+        self.log.write_bytes(original)
+        self.tokens(30, 3, last=(10, 1))
+        result = self.collect(binding, "restored", close=True)["usage"]
+        self.assertEqual(result["observed_totals"]["total_tokens"], 11)
+
+    def test_corrupt_optional_event_does_not_block_graph_status(self):
+        self.tokens(10, 1)
+        self.initialize()
+        self.bind()
+        with self.store.open_run("albanian-live-translate", "RUN-1") as connection:
+            connection.execute("UPDATE events SET detail_json=? WHERE event_type='usage.observation'",
+                               (json.dumps({"PRIVATE_SECRET": "PRIVATE_SOURCE_PATH"}),))
+            connection.commit()
+        result = self.graphctl("status", "--run-id", "RUN-1")
+        self.assertEqual(result["usage"]["diagnostics"], ["invalid_usage_state"])
+        self.assertNotIn("PRIVATE", json.dumps(result["usage"]))
+
+    def test_metadata_limits_malformed_nested_and_unfinished_records_are_private(self):
+        from graph_engine import usage
+        self.tokens(10, 1)
+        self.initialize()
+        binding = self.bind()["binding_id"]
+        with self.log.open("ab") as handle:
+            handle.write(b'{"PRIVATE_CREDENTIAL":"secret",broken}\n')
+            handle.write(b'[' * 30 + b'"PRIVATE_NESTED_SECRET"' + b']' * 30 + b'\n')
+        self.context("PRIVATE_MODEL", "PRIVATE_EFFORT")
+        self.tokens(20, 2, last=(10, 1))
+        with self.log.open("ab") as handle:
+            handle.write(b'{"type":"event_msg","payload":')
+        result = self.collect(binding)["usage"]
+        self.assertEqual(result["observed_totals"]["total_tokens"], 11)
+        self.assertIn("malformed_record", result["diagnostics"])
+        with self.store.open_run("albanian-live-translate", "RUN-1") as connection:
+            saved = [row[0] for row in connection.execute("SELECT detail_json FROM events WHERE event_type LIKE '%usage%'")]
+            saved.extend(row[0] for row in connection.execute("SELECT response_json FROM operations WHERE operation_id IN ('bind-usage','collect-usage')"))
+        text = json.dumps(saved) + json.dumps(result)
+        for forbidden in ("PRIVATE_", "synthetic-session", str(self.log), "secret"):
+            self.assertNotIn(forbidden, text)
+        with patch.object(usage, "MAX_BYTES", 1):
+            result = self.collect(binding, "limited")["usage"]
+            self.assertIn("source_limit", result["diagnostics"])
+            self.assertEqual(result["observed_totals"]["total_tokens"], 11)
+        with patch.object(usage, "MAX_RECORDS", 2):
+            source = usage.read_source(str(self.log))
+            self.assertIn("record_limit", {code for _, code in source.diagnostics})
+        with patch.object(usage, "CHUNK_BYTES", 40):
+            source = usage.read_source(str(self.log))
+            self.assertIn("record_limit", {code for _, code in source.diagnostics})
+
+    def test_invalid_required_counters_never_become_zero_or_complete(self):
+        from graph_engine.usage import read_source
+        invalid = [
+            {"input_tokens": True, "output_tokens": 0, "total_tokens": 1},
+            {"input_tokens": -1, "output_tokens": 2, "total_tokens": 1},
+            {"input_tokens": 10, "output_tokens": 2, "total_tokens": 13},
+            {"input_tokens": 1 << 63, "output_tokens": 0, "total_tokens": 1 << 63},
+            {"input_tokens": 10, "total_tokens": 10},
+        ]
+        for counters in invalid:
+            self.append("event_msg", {"type": "token_count", "info": {"total_token_usage": counters}})
+        self.assertEqual(read_source(str(self.log)).snapshots, [])
+        self.initialize()
+        binding = self.bind()["binding_id"]
+        result = self.collect(binding, close=True)["usage"]
+        self.assertEqual(result["coverage"], "unavailable")
+        self.assertIsNone(result["observed_totals"])
+
+    def test_optional_discontinuity_does_not_discard_required_totals(self):
+        self.tokens(100, 20, cached_input_tokens=30, reasoning_output_tokens=10, cache_write_tokens=12)
+        self.initialize()
+        binding = self.bind()["binding_id"]
+        self.tokens(120, 25, last=(20, 5), cached_input_tokens=10, reasoning_output_tokens=26, cache_write_tokens=15)
+        result = self.collect(binding, close=True)["usage"]
+        self.assertEqual(result["observed_totals"]["total_tokens"], 25)
+        self.assertIsNone(result["observed_totals"]["cached_input_tokens"])
+        self.assertIsNone(result["observed_totals"]["reasoning_output_tokens"])
+        self.assertEqual(result["observed_totals"]["cache_write_tokens"], 3)
+        self.assertEqual(set(result["metric_partial"]), {"cached_input_tokens", "reasoning_output_tokens"})
+
+    def test_multiple_contexts_are_unattributed_without_guessing_planned_model(self):
+        self.tokens(100, 20)
+        self.initialize()
+        binding = self.bind()["binding_id"]
+        self.context(effort="medium")
+        self.context(effort="high")
+        self.tokens(120, 25, last=(20, 5))
+        result = self.collect(binding, close=True)["usage"]
+        self.assertEqual(result["unattributed"]["observed_totals"]["total_tokens"], 25)
+        self.assertEqual(set(result["models"]), {"unknown"})
+        self.assertIn("ambiguous_increment", result["diagnostics"])
+
+    def test_unfinished_record_is_collected_once_after_newline(self):
+        self.tokens(10, 1)
+        self.initialize()
+        binding = self.bind()["binding_id"]
+        self.tokens(20, 2, last=(10, 1))
+        complete = self.log.read_bytes()
+        self.log.write_bytes(complete[:-1])
+        result = self.collect(binding)["usage"]
+        self.assertEqual(result["observed_totals"]["total_tokens"], 0)
+        self.log.write_bytes(complete)
+        result = self.collect(binding, "complete-line", close=True)["usage"]
+        self.assertEqual(result["observed_totals"]["total_tokens"], 11)
+
+    def test_opened_source_identity_change_and_symlink_are_rejected(self):
+        import os
+        from graph_engine import usage
+        original_stat = os.fstat
+
+        def different_identity(descriptor):
+            fields = list(original_stat(descriptor))
+            fields[1] += 1
+            return os.stat_result(fields)
+
+        with patch.object(usage.os, "fstat", side_effect=different_identity):
+            source = usage.read_source(str(self.log))
+        self.assertIsNone(source.source_id)
+        self.assertIn("source_changed", {code for _, code in source.diagnostics})
+        linked = self.root / "linked-session"
+        try:
+            linked.symlink_to(self.log)
+        except OSError:
+            # Windows without symlink privilege still exercises the reparse-component guard.
+            with patch.object(usage, "_safe_components", side_effect=StateError("USAGE_SOURCE_UNSAFE")):
+                source = usage.read_source(str(self.log))
+        else:
+            source = usage.read_source(str(linked))
+        self.assertIn("source_unsafe", {code for _, code in source.diagnostics})
+
+    def test_checkpoint_replacement_same_offset_requires_identity_and_prefix(self):
+        from graph_engine.usage import checkpoint
+        self.tokens(10, 1)
+        saved = checkpoint(str(self.log))
+        original = self.log.read_bytes()
+        self.initialize()
+        self.log.write_bytes(original.replace(b"synthetic-session", b"different-session"))
+        with self.assertRaisesRegex(StateError, "USAGE_CHECKPOINT_MISMATCH"):
+            self.bind(checkpoint=saved)
+        self.log.write_bytes(original.replace(b"PRIVATE_SOURCE_PATH", b"CHANGED_SOURCE_PATH"))
+        with self.assertRaisesRegex(StateError, "USAGE_CHECKPOINT_MISMATCH"):
+            self.bind(checkpoint=saved)
+        self.log.write_bytes(original)
+        binding = self.bind(checkpoint=saved)["binding_id"]
+        self.log.write_bytes(original[:60])
+        result = self.collect(binding, close=True)["usage"]
+        self.assertEqual(result["coverage"], "partial")
+        self.assertIsNone(result["complete_totals"])
+
+    def test_concurrent_candidate_cannot_overwrite_newer_checkpoint(self):
+        self.tokens(10, 1)
+        self.initialize()
+        binding = self.bind()["binding_id"]
+        self.tokens(20, 2, last=(10, 1))
+        original_mutate = self.store.mutate
+
+        def interleave(*args, **kwargs):
+            with patch.object(self.store, "mutate", original_mutate):
+                self.collect(binding, "winner")
+            return original_mutate(*args, **kwargs)
+
+        with patch.object(self.store, "mutate", side_effect=interleave):
+            with self.assertRaisesRegex(StateError, "USAGE_STALE_CHECKPOINT"):
+                self.collect(binding, "loser")
+        result = self.graphctl("status", "--run-id", "RUN-1")["usage"]
+        self.assertEqual(result["observed_totals"]["total_tokens"], 11)
+
+    def test_retry_has_distinct_usage_attempt_without_recounting_first(self):
+        self.tokens(10, 1)
+        self.initialize()
+        first = self.claim_raw()
+        binding = self.bind(branch=first)["binding_id"]
+        self.tokens(20, 2, last=(10, 1))
+        self.collect(binding, close=True)
+        self.record(first, {"schema_version": 1, "run_id": "RUN-1", "branch_id": first["branch_id"],
+                           "status": "failed", "output_kind": "impact_map", "failure_code": "INSUFFICIENT_EVIDENCE",
+                           "evidence": [self.repo_artifact("failure", "retry-usage-failure")]})
+        self.graphctl("record", "retry", "--run-id", "RUN-1", "--branch-id", first["branch_id"],
+                      "--reason-code", "RETRY", "--op-id", "retry")
+        second = self.claim_raw()
+        binding = self.bind(op="second-bind", branch=second)["binding_id"]
+        self.tokens(30, 3, last=(10, 1))
+        result = self.collect(binding, "second-close", close=True)["usage"]
+        self.assertEqual(result["observed_totals"]["total_tokens"], 22)
+        self.assertEqual(result["attempts"][first["attempt_id"]]["observed_totals"]["total_tokens"], 11)
+        self.assertEqual(result["attempts"][second["attempt_id"]]["observed_totals"]["total_tokens"], 11)
+
+    def test_missing_resumed_session_remains_a_gap_after_other_interval_closes(self):
+        self.tokens(10, 1)
+        self.initialize()
+        binding = self.bind()["binding_id"]
+        self.tokens(20, 2, last=(10, 1))
+        self.collect(binding, close=True)
+        self.log = self.root / "PRIVATE_MISSING_SESSION"
+        missing = self.bind(op="missing-resume")
+        self.assertEqual(missing["code"], "USAGE_UNAVAILABLE")
+        self.assertIsNone(missing["checkpoint"])
+        result = self.collect(missing["binding_id"], "missing-close", close=True)["usage"]
+        self.assertEqual(result["phases"]["scoping"]["coverage"], "partial")
+        self.assertEqual(result["observed_totals"]["total_tokens"], 11)
+        self.assertIn("source_unavailable", result["diagnostics"])
+        self.assertNotIn("PRIVATE", json.dumps(result))
+
+    def test_observed_cache_write_spelling_and_alias_precedence(self):
+        from graph_engine.usage import read_source
+        self.tokens(100, 20, cache_write_input_tokens=12, cache_write_tokens=99)
+        self.initialize()
+        binding = self.bind()["binding_id"]
+        self.tokens(120, 25, last=(20, 5), cache_write_input_tokens=15, cache_write_tokens=199)
+        result = self.collect(binding)["usage"]
+        self.assertEqual(result["observed_totals"]["cache_write_tokens"], 3)
+        self.tokens(140, 30, last=(20, 5), cache_write_input_tokens="invalid", cache_write_tokens=200)
+        self.assertIsNone(read_source(str(self.log)).snapshots[-1]["counters"]["cache_write_tokens"])
+        result = self.collect(binding, "invalid-preferred", close=True)["usage"]
+        self.assertEqual(result["observed_totals"]["total_tokens"], 50)
+        self.assertIsNone(result["observed_totals"]["cache_write_tokens"])
+        self.assertIn("cache_write_tokens", result["metric_partial"])
+
+    def test_unbound_retry_keeps_agent_role_and_generation_totals_partial(self):
+        self.tokens(10, 1)
+        self.initialize()
+        first = self.claim_raw()
+        binding = self.bind(branch=first)["binding_id"]
+        self.tokens(20, 2, last=(10, 1))
+        self.collect(binding, close=True)
+        self.record(first, {"schema_version": 1, "run_id": "RUN-1", "branch_id": first["branch_id"],
+                           "status": "failed", "output_kind": "impact_map", "failure_code": "INSUFFICIENT_EVIDENCE",
+                           "evidence": [self.repo_artifact("failure", "unbound-retry-failure")]})
+        self.graphctl("record", "retry", "--run-id", "RUN-1", "--branch-id", first["branch_id"],
+                      "--reason-code", "RETRY", "--op-id", "unbound-retry")
+        second = self.claim_raw()
+        result = self.graphctl("status", "--run-id", "RUN-1")["usage"]
+        for dimension, key in (("agents", first["branch_id"]), ("roles", first["role"]), ("generations", "0")):
+            summary = result[dimension][key]
+            self.assertEqual(summary["coverage"], "partial")
+            self.assertEqual(summary["observed_totals"]["total_tokens"], 11)
+            self.assertIsNone(summary["complete_totals"])
+            self.assertIn(second["attempt_id"], summary["missing_executed_attempts"])
+        self.assertEqual(set(result["models"]), {"gpt-6-astra"})
+        for summary in (result["models"]["gpt-6-astra"], result["efforts"]["medium"], result["model_efforts"]["gpt-6-astra/medium"]):
+            self.assertEqual(summary["attribution_scope"], "observed_intervals_only")
+            self.assertEqual(summary["association_coverage"], "partial")
+
+    def test_supervisor_group_keeps_missing_primary_phase_visible(self):
+        self.tokens(10, 1)
+        self.initialize()
+        binding = self.bind("implementation")["binding_id"]
+        self.tokens(20, 2, last=(10, 1))
+        result = self.collect(binding, close=True)["usage"]
+        for summary in (result["roles"]["supervisor"], result["generations"]["0"]):
+            self.assertEqual(summary["coverage"], "partial")
+            self.assertEqual(summary["observed_totals"]["total_tokens"], 11)
+            self.assertIsNone(summary["complete_totals"])
+            self.assertEqual(summary["missing_primary_phases"], ["scoping"])
+
+    def test_raced_nonregular_source_is_opened_nonblocking_and_rejected(self):
+        import os
+        import stat
+        from graph_engine import usage
+        original_open, original_stat = os.open, os.fstat
+        nonblocking = getattr(os, "O_NONBLOCK", 0x40000000)
+        observed_flags = []
+
+        def capture_open(path, flags):
+            observed_flags.append(flags)
+            # A synthetic flag on Windows is removed before the real regular-file
+            # open; fstat below supplies the raced FIFO without opening a pipe.
+            return original_open(path, flags & ~nonblocking)
+
+        def fifo_stat(descriptor):
+            fields = list(original_stat(descriptor))
+            fields[0] = stat.S_IFIFO | 0o600
+            return os.stat_result(fields)
+
+        with patch.object(usage.os, "O_NONBLOCK", nonblocking, create=True), \
+                patch.object(usage.os, "open", side_effect=capture_open), \
+                patch.object(usage.os, "fstat", side_effect=fifo_stat):
+            source = usage.read_source(str(self.log))
+        self.assertEqual(len(observed_flags), 1)
+        self.assertTrue(observed_flags[0] & nonblocking)
+        self.assertIsNone(source.source_id)
+        self.assertEqual(source.diagnostics, [(0, "source_changed")])
+
+    def test_large_valid_counters_preserve_exact_aggregate_and_structured_cli_output(self):
+        from graph_engine.usage import MAX_INTEGER
+        self.tokens(0, 0)
+        self.initialize()
+        binding = self.bind()["binding_id"]
+        self.tokens(10, 0)
+        self.collect(binding)
+        self.tokens(0, 0)
+        self.tokens(MAX_INTEGER, 0)
+        stream = io.StringIO()
+        with patch("graph_engine.cli.StateStore", return_value=self.store), redirect_stdout(stream):
+            code = main(["--repo", str(self.repo), "record", "usage", "--run-id", "RUN-1",
+                         "--action", "close", "--binding-id", binding, "--session-log", str(self.log),
+                         "--op-id", "large-close"])
+        self.assertEqual(code, 0)
+        result = json.loads(stream.getvalue())
+        self.assertTrue(result["ok"])
+        self.assertNotIn("Traceback", stream.getvalue())
+        for summary in (result["usage"], result["usage"]["phases"]["scoping"], result["usage"]["model_efforts"]["gpt-6-astra/medium"]):
+            self.assertEqual(summary["observed_totals"]["input_tokens"], MAX_INTEGER + 10)
+            self.assertEqual(summary["observed_totals"]["output_tokens"], 0)
+            self.assertEqual(summary["observed_totals"]["total_tokens"], MAX_INTEGER + 10)
+            self.assertEqual(summary["coverage"], "partial")
+            self.assertIsNone(summary["complete_totals"])
+            self.assertIn("counter_reset", summary["diagnostics"])
+        self.assertEqual(self.graphctl("status", "--run-id", "RUN-1")["usage"]["observed_totals"]["total_tokens"], MAX_INTEGER + 10)
+
+
 class CliGoldenTraceTests(GraphCase):
     def setUp(self):
         super().setUp()

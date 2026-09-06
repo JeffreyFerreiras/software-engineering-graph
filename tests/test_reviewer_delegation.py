@@ -332,6 +332,38 @@ class ReviewerDelegationFlowTests(GraphCase):
         self.assertEqual(reviewer["role"], "code_reviewer")
         return reviewer
 
+    def test_usage_counts_parent_child_and_resumed_attempt_once(self):
+        from graph_engine.ids import sha256_bytes
+        parent = self._to_delivery_review()
+        delegated, resumed, _, _ = self._delegate_round(parent, 1, "REV-123")
+        child_id = delegated["child_branch_ids"][0]
+        with self.store.open_run("albanian-live-translate", "RUN-1") as connection:
+            child = dict(connection.execute("SELECT branch_id,attempt_id FROM branch_attempts WHERE branch_id=?", (child_id,)).fetchone())
+        for index, branch in enumerate((parent, child, resumed)):
+            identifier = "usage-session-" + str(index)
+            path = self.root / (identifier + ".jsonl")
+            counters = {"input_tokens": 10, "output_tokens": 1, "total_tokens": 11}
+            records = [
+                {"type": "session_meta", "payload": {"id": identifier}},
+                {"type": "turn_context", "payload": {"model": "gpt-6-astra", "effort": "medium"}},
+                {"type": "event_msg", "payload": {"type": "token_count", "info": {
+                    "total_token_usage": counters, "last_token_usage": counters}}},
+            ]
+            path.write_text("".join(json.dumps(item) + "\n" for item in records), encoding="utf-8")
+            recorded = self.graphctl("record", "usage", "--run-id", "RUN-1", "--action", "bind",
+                                    "--session-log", str(path), "--branch-id", branch["branch_id"],
+                                    "--attempt-id", branch["attempt_id"], "--start-offset", "0",
+                                    "--source-id", sha256_bytes(identifier.encode("utf-8")),
+                                    "--prefix-sha256", sha256_bytes(b""), "--op-id", "usage-bind-" + str(index))
+            result = self.graphctl("record", "usage", "--run-id", "RUN-1", "--action", "close",
+                                   "--session-log", str(path), "--binding-id", recorded["binding_id"],
+                                   "--op-id", "usage-close-" + str(index))["usage"]
+        self.assertEqual(result["observed_totals"]["total_tokens"], 33)
+        self.assertEqual(result["agents"][parent["branch_id"]]["observed_totals"]["total_tokens"], 22)
+        self.assertEqual(result["agents"][child_id]["observed_totals"]["total_tokens"], 11)
+        self.assertEqual(len(result["attempts"]), 3)
+        self.assertEqual(result["phases"]["review_testing"]["observed_totals"]["total_tokens"], 33)
+
     def _approved_evidence(self, parent):
         if parent.get("review_continuation"):
             context = parent["inputs"][0]["content"]
