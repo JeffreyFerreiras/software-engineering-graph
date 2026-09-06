@@ -70,7 +70,7 @@ creates a pull request, or removes a worktree. The Senior Engineer remains the s
 writer and never publishes.
 
 The Supervisor preflight names a host catalog (`codex`, `codex-astra`, or `cursor`) and recommends that catalog's
-Supervisor assignment. Codex defaults to `gpt-5.6-sol` with `xhigh` reasoning. Cursor defaults to
+Supervisor assignment. Codex defaults to `gpt-6-astra` with `xhigh` reasoning. Cursor defaults to
 `cursor-grok-4.6` with `high` reasoning instead of ChatGPT Sol. Unless a trusted host runtime
 assertion verifies that exact actual assignment, the Supervisor operates in advisory mode and displays:
 
@@ -80,15 +80,17 @@ This warning describes model verification; it does not add approval gates. The a
 routine in-scope decisions and unchanged retries, replacements, and continuations within existing
 budgets. Material changes to scope, authority, route, roles, host, model, or effort need a new plan.
 
-Use `init --host codex-astra` to opt into catalog revision 2 at every size: Luna `max` for mapper
+`init` defaults to `codex-astra` catalog revision 2 at every size: Luna `max` for mapper
 and design research, Astra `low` for Tech Lead, Senior Engineer, and Test Engineer, and Astra
 `medium` for Architect, Code Reviewer, and Security Reviewer. Supervisor stays Astra `xhigh` and
 publication stays Luna `max`; other advisory/specialist assignments retain their existing mapping.
 Historical unversioned Astra plans retain their original assignments and digests. Older engines
 cannot read revision 2 Astra plans; rollback must preserve approvals without rewriting them.
 The actual primary model is not switched by the CLI. Verify host availability and exact dispatch
-assignments before approval. Default Codex and Cursor plans and the seven role profile defaults
-remain unchanged. See [model catalogs](references/model-catalogs.md) for compatibility and evaluation.
+assignments before approval. Use `--host codex` for the explicit Luna/Sol fallback; Cursor and
+existing approved plans retain their assignments. The seven reusable role profiles match the Astra
+default; installed profiles require a separately authorized sync.
+See [model catalogs](references/model-catalogs.md) for compatibility and evaluation.
 
 The four executable routes are `advisory` (read-only review), `design_only` (research and independent
 design approval), `fast_path` (mechanical/documentation implementation plus independent review and

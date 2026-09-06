@@ -67,23 +67,24 @@ side effects at the outer boundary.
 Role intelligence is a host-agnostic class plus requested effort, not a vendor model ID.
 `graph_engine/hosts.py` expands `(class, effort)` through `HOST_MATRIX`:
 
-| Class | Requested effort | Codex (test/default) | Cursor runtime |
+| Class | Requested effort | Explicit Codex fallback | Cursor runtime |
 | --- | --- | --- | --- |
 | `economy` | `max` | `gpt-5.6-luna` `max` | `composer-2.5` `high` |
 | `reasoning` | `medium` / `high` / `xhigh` / `max` | `gpt-5.6-sol` at that effort | `cursor-grok-4.6` at medium/high/xhigh |
 | `primary-thread` | `inherited` | inherited | inherited |
 
-Tests and default runs use the Codex catalog. Cursor can dispatch those same Codex model IDs, so
+The frozen baseline uses the Codex catalog. Cursor can dispatch those same Codex model IDs, so
 Codex-config assertions are valid on both hosts. `--host cursor` is the cheaper runtime mapping.
 The execution plan records `host`, `intelligence_class`, resolved `model`/`reasoning_effort`, and
 `dispatch_model`. Human approval covers the mapped vendor IDs. Host detection does not use
 environment variables or agent self-reports.
 
-`--host codex-astra` selects opt-in catalog revision 2 for the Codex runtime. At every size it uses
+Omitting `--host` or passing `--host codex-astra` selects default catalog revision 2 for the Codex runtime. At every size it uses
 Luna max for mapper/research, Astra low for Tech Lead/Senior Engineer/Test Engineer, and Astra medium
 for Architect/Code Reviewer/Security Reviewer. Other advisory/specialist mappings remain unchanged.
 Supervisor stays Astra xhigh, publication stays Luna max, and consolidation stays inherited.
-It does not switch the primary model. Baseline catalogs and seven default profiles stay unchanged.
+It does not switch the primary model. Baseline catalogs stay unchanged; the seven reusable profiles
+match the Astra default. Installed profiles require a separately authorized sync.
 New Astra plans include `catalog_revision: 2` in the canonical digest. Reconstruction treats absent
 markers as the frozen historical matrix and accepts only integer 2 on Astra when a marker is present.
 Exact plan, canonical digest, row digest, and approval digest checks remain mandatory. Historical
@@ -308,7 +309,7 @@ All economy size assignments use the selected host catalog's economy effort. Tec
 use that catalog's reasoning model at every size. The centralized execution-plan invariant rejects an
 invalid host, model, or effort before it can enter a persisted envelope.
 
-The recommended Supervisor assignment comes from the host catalog. Codex recommends `gpt-5.6-sol`
+The recommended Supervisor assignment comes from the host catalog. Codex defaults to `gpt-6-astra`
 with `xhigh` reasoning. Cursor recommends `cursor-grok-4.6` with `high` reasoning rather than
 ChatGPT Sol. Actual model and effort are considered verified only when supplied by a trusted host
 runtime assertion. Missing, unverifiable, or mismatched values select advisory mode and require this

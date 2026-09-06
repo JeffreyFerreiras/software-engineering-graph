@@ -3,16 +3,16 @@
 The size matrix assigns each role an intelligence class and requested effort.
 This table maps that pair onto a concrete vendor model for the selected host.
 
-Tests and default runs use the Codex catalog (`gpt-5.6-luna` / `gpt-5.6-sol`).
-Cursor can dispatch those same models, so Codex-config tests are valid on both
-hosts. The Cursor catalog is the cheaper runtime mapping for `--host cursor`.
+New runs default to the Astra catalog. The explicit Codex catalog preserves
+the Luna/Sol mapping for existing plans and hosts without Astra access.
 """
 
 from typing import Dict, Optional, Tuple
 
 
 INTELLIGENCE_CLASSES = ("economy", "reasoning", "primary-thread")
-DEFAULT_HOST = "codex"
+DEFAULT_HOST = "codex-astra"
+LEGACY_HOST = "codex"
 REASONING_DISPATCH_WEIGHTS = {"high": 3, "xhigh": 4, "max": 5}
 MODEL_DISPATCH_WEIGHTS = {("gpt-6-astra", "medium"): 3}
 
