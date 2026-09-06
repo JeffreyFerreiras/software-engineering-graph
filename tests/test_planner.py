@@ -3,9 +3,12 @@ from pathlib import Path
 
 from graph_engine.config import load_policy
 from graph_engine.execution import (
-    CLASS_ASSIGNMENTS, SIZE_ASSIGNMENTS, build_execution_plan, validate_model_assignment,
+    CLASS_ASSIGNMENTS, SIZE_ASSIGNMENTS, build_execution_plan, reconstruct_execution_plan,
+    validate_model_assignment,
 )
-from graph_engine.hosts import DEFAULT_HOST, dispatch_weight_for, known_hosts, resolve_assignment
+from graph_engine.hosts import (
+    DEFAULT_HOST, dispatch_weight_for, known_hosts, resolve_assignment, supported_dispatch_weights,
+)
 from graph_engine.ids import stable_id
 from graph_engine.planner import (
     NodeSpec, design_research_nodes, design_review_nodes, envelope, initial_route_nodes,
@@ -404,10 +407,12 @@ class PlannerTests(GraphCase):
                     self.assertTrue(model, (host, size, role))
                     self.assertTrue(resolved, (host, size, role))
 
-    def test_astra_catalog_is_opt_in_and_preserves_roles_and_efforts(self):
-        for size in ("small", "medium", "large"):
-            default = build_execution_plan("RUN-1", self.task(), size)
-            astra = build_execution_plan("RUN-1", self.task(), size, host="codex-astra")
+    def test_astra_catalog_revision_two_core_assignments_for_both_task_versions(self):
+        for task, size in ((task, size) for task in (self.task(), self.task_v2())
+                           for size in ("small", "medium", "large")):
+            default = build_execution_plan("RUN-1", task, size)
+            astra = build_execution_plan("RUN-1", task, size, host="codex-astra")
+            self.assertEqual(astra["catalog_revision"], 2)
             self.assertNotEqual(astra["plan_digest"], default["plan_digest"])
             self.assertEqual(astra["minimum_route"], default["minimum_route"])
             self.assertEqual(astra["publication_assignment"], default["publication_assignment"])
@@ -418,6 +423,12 @@ class PlannerTests(GraphCase):
                 expected = dict(original)
                 if original["intelligence_class"] == "reasoning":
                     expected.update(model="gpt-6-astra", dispatch_model="gpt-6-astra")
+                if original["node_key"] in {"tech_lead", "senior_engineer", "test_engineer"}:
+                    expected.update(intelligence_class="reasoning", model="gpt-6-astra",
+                                    dispatch_model="gpt-6-astra", reasoning_effort="low")
+                if original["node_key"] in {"architect", "code_reviewer", "security_reviewer"}:
+                    expected.update(intelligence_class="reasoning", model="gpt-6-astra",
+                                    dispatch_model="gpt-6-astra", reasoning_effort="medium")
                 self.assertEqual(selected, expected)
 
     def test_astra_catalog_survives_approval_claim_and_resume(self):
@@ -426,7 +437,7 @@ class PlannerTests(GraphCase):
         lead = self.claim()
         self.assertEqual(lead["node_key"], "tech_lead")
         self.assertEqual(lead["model"], "gpt-6-astra")
-        self.assertEqual(lead["reasoning_effort"], "medium")
+        self.assertEqual(lead["reasoning_effort"], "low")
         self.graphctl("--ack-degraded-permissions", "--ack-degraded-durability",
                       "resume", "--run-id", "RUN-1")
         plan = self.graphctl("status", "--run-id", "RUN-1")["execution_plan"]
@@ -434,8 +445,65 @@ class PlannerTests(GraphCase):
         self.assertEqual(plan["plan_digest"], initialized["execution_plan_digest"])
         self.assertEqual(plan["status"], "approved")
 
+    def test_frozen_catalog_digests_remain_exact(self):
+        task = {"schema_version": 1, "task_id": "CATALOG-COMPAT", "minimum_route": "full_delivery",
+                "mandatory_impact_tags": [], "risk_level": "low"}
+        digests = {
+            "codex": ("17bfe0160948551e4221aa55eb72b86cc6618cb11dce867379788e6125dbf03e",
+                      "8c9039c939b99b9bba57cd64732181daac5a32d7c8705c021e787d35804383f2",
+                      "fe2f684917696ef47080eb9b40e17bfadcb0a075b204222d36fdc8f7b44f41e3"),
+            "cursor": ("76daf3f9f53d336d30ca3fa65d694b2145fe953d66d50a7748c2eaa332ef46f0",
+                       "6396dbcdbc2b33415b393e2441bf61ab187f918fb038418eb9b5e637a6bc388f",
+                       "f256f89795d0731cd0de5ec49dfbbcbf1a8cb8983740e7e0399e9d0e5e00d6ad"),
+            "codex-astra": ("7265a44577ffb1c7c4f67edfe5d849a5409453556479bb0382753e45793ac93c",
+                            "54d8495428d739eeeca53aa151a1fb643f5b67b2e42afab2a73a03cd11cdea0e",
+                            "a1f1a10b84d22a1d8a130fd40df9389bf87c9803f853a39f1fff059c2965274c"),
+        }
+        for host, expected in digests.items():
+            for size, expected_digest in zip(("small", "medium", "large"), expected):
+                plan = reconstruct_execution_plan("RUN-COMPAT", task, {"host": host}, size)
+                self.assertNotIn("catalog_revision", plan)
+                self.assertEqual(plan["plan_digest"], expected_digest, (host, size))
+                if host != "codex-astra":
+                    self.assertEqual(build_execution_plan("RUN-COMPAT", task, size, host), plan)
+
+    def test_catalog_revision_markers_fail_closed(self):
+        for host in known_hosts():
+            for marker in (None, True, False, 2.0, "2", 0, 1, 3, [], {}):
+                with self.subTest(host=host, marker=marker):
+                    with self.assertRaisesRegex(ValueError, "CATALOG_REVISION_INVALID"):
+                        reconstruct_execution_plan("RUN-1", self.task(),
+                                                   {"host": host, "catalog_revision": marker})
+            if host != "codex-astra":
+                with self.assertRaisesRegex(ValueError, "CATALOG_REVISION_INVALID"):
+                    reconstruct_execution_plan("RUN-1", self.task(),
+                                               {"host": host, "catalog_revision": 2})
+
+    def test_historical_delegation_plan_reconstructs_without_catalog_upgrade(self):
+        from tests.test_reviewer_delegation import policy_config
+
+        for task in (self.task(), self.task_v2()):
+            task["reviewer_delegation"] = policy_config()
+            legacy = reconstruct_execution_plan("RUN-1", task, {"host": "codex-astra"}, "small")
+            rebuilt = reconstruct_execution_plan("RUN-1", task, legacy, "small")
+            self.assertEqual(rebuilt, legacy)
+            self.assertEqual(rebuilt["schema_version"], 2)
+            self.assertNotIn("catalog_revision", rebuilt)
+            candidate = build_execution_plan("RUN-1", task, "small", "codex-astra")
+            self.assertEqual(candidate["conditional_review_assignments"], legacy["conditional_review_assignments"])
+            self.assertEqual(candidate["reviewer_delegation_limits"], legacy["reviewer_delegation_limits"])
+            self.assertNotEqual(candidate["plan_digest"], legacy["plan_digest"])
+
+    def test_astra_medium_delegation_weight_is_model_specific(self):
+        weights = supported_dispatch_weights()
+        self.assertEqual(dispatch_weight_for("gpt-6-astra", "medium"), 3)
+        self.assertEqual(weights[("gpt-6-astra", "medium")], 3)
+        for pair in (("gpt-6-astra", "low"), ("gpt-5.6-sol", "medium")):
+            self.assertIsNone(dispatch_weight_for(*pair))
+            self.assertNotIn(pair, weights)
+
     def test_astra_assignments_reject_unapproved_efforts_and_catalogs(self):
-        for effort in ("none", "minimal", "low", "ultra", "inherited"):
+        for effort in ("none", "minimal", "ultra", "inherited"):
             with self.subTest(effort=effort):
                 with self.assertRaisesRegex(ValueError, "MODEL_ASSIGNMENT_INVALID"):
                     validate_model_assignment("tech_lead", "gpt-6-astra", effort, host="codex-astra")

@@ -79,13 +79,20 @@ The execution plan records `host`, `intelligence_class`, resolved `model`/`reaso
 `dispatch_model`. Human approval covers the mapped vendor IDs. Host detection does not use
 environment variables or agent self-reports.
 
-`--host codex-astra` selects an opt-in catalog for the Codex runtime. It replaces the reasoning
-class model with `gpt-6-astra` at the existing medium/high/xhigh/max efforts and recommends an Astra
-`xhigh` Supervisor. Economy/publication assignments stay Luna `max`, and consolidation stays inherited.
-It does not switch the primary model. Existing catalog mappings, default profiles, and plan digests
-are unchanged. The host must expose each exact approved assignment; see
-[model catalogs](../references/model-catalogs.md). Reviewer delegation accepts Astra high/xhigh/max
-with weights 3/4/5 in both the policy schema and runtime validator. Weights are not monetary prices.
+`--host codex-astra` selects opt-in catalog revision 2 for the Codex runtime. At every size it uses
+Luna max for mapper/research, Astra low for Tech Lead/Senior Engineer/Test Engineer, and Astra medium
+for Architect/Code Reviewer/Security Reviewer. Other advisory/specialist mappings remain unchanged.
+Supervisor stays Astra xhigh, publication stays Luna max, and consolidation stays inherited.
+It does not switch the primary model. Baseline catalogs and seven default profiles stay unchanged.
+New Astra plans include `catalog_revision: 2` in the canonical digest. Reconstruction treats absent
+markers as the frozen historical matrix and accepts only integer 2 on Astra when a marker is present.
+Exact plan, canonical digest, row digest, and approval digest checks remain mandatory. Historical
+plans keep their original bytes and approvals, including delegation-enabled plans. Older engines
+cannot read new revision 2 Astra plans; rollback must not rewrite approvals.
+The host must expose each exact approved assignment; see [model catalogs](../references/model-catalogs.md).
+Reviewer delegation accepts Astra medium/high/xhigh/max with weights 3/3/4/5 in schema and runtime;
+Astra low and Sol medium remain unsupported. Weights are not monetary prices. Sizing, topology,
+and token accounting are unchanged; this candidate table makes no live benchmark claim.
 
 ### Pre-design research gate
 

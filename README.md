@@ -80,8 +80,12 @@ This warning describes model verification; it does not add approval gates. The a
 routine in-scope decisions and unchanged retries, replacements, and continuations within existing
 budgets. Material changes to scope, authority, route, roles, host, model, or effort need a new plan.
 
-Use `init --host codex-astra` to opt into Astra for reasoning roles at the existing effort levels,
-with an Astra `xhigh` Supervisor recommendation. Economy and publication roles remain Luna `max`.
+Use `init --host codex-astra` to opt into catalog revision 2 at every size: Luna `max` for mapper
+and design research, Astra `low` for Tech Lead, Senior Engineer, and Test Engineer, and Astra
+`medium` for Architect, Code Reviewer, and Security Reviewer. Supervisor stays Astra `xhigh` and
+publication stays Luna `max`; other advisory/specialist assignments retain their existing mapping.
+Historical unversioned Astra plans retain their original assignments and digests. Older engines
+cannot read revision 2 Astra plans; rollback must preserve approvals without rewriting them.
 The actual primary model is not switched by the CLI. Verify host availability and exact dispatch
 assignments before approval. Default Codex and Cursor plans and the seven role profile defaults
 remain unchanged. See [model catalogs](references/model-catalogs.md) for compatibility and evaluation.

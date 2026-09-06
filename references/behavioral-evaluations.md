@@ -13,9 +13,12 @@ Provide the same repository snapshot, policy, tool catalog, relevant instruction
 to both catalogs. Load the candidate SKILL.md and the references it requires.
 
 Use a fresh primary session per scenario, with the primary model/effort explicitly set and verified
-by the host. Run three trials per scenario for each of `codex` and `codex-astra`. Keep role/effort
-matrices equivalent except for the catalog's reasoning model. Record the actual assignments and
-skill revision. If exact assignments are unavailable, mark that trial BLOCKED rather than substitute.
+by the host. Run three trials per scenario for each of `codex` and `codex-astra` revision 2 using
+their actual catalog assignments. This candidate comparison changes both model and effort;
+do not attribute its results to model alone. Record the actual assignments, catalog revision,
+and skill revision. If exact assignments are unavailable, mark that trial BLOCKED rather than substitute.
+For a model-only control, run a separately labeled equal-effort comparison with approved exact
+assignments; do not relabel that control as the revision 2 candidate table.
 For a before/after prompt comparison, additionally repeat with the baseline skill revision under
 the same model and host settings; do not attribute model and prompt changes to each other.
 

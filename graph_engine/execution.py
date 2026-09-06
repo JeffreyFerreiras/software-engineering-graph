@@ -72,6 +72,16 @@ def _resolved_size_assignments(host: str) -> Dict[str, Dict[str, Tuple[str, str]
 # Codex-resolved view used by existing tests and default runs.
 SIZE_ASSIGNMENTS: Dict[str, Dict[str, Tuple[str, str]]] = _resolved_size_assignments(DEFAULT_HOST)
 
+ASTRA_CATALOG_REVISION = 2
+ASTRA_CORE_ASSIGNMENTS = {
+    "tech_lead": ("reasoning", "low"),
+    "architect": ("reasoning", "medium"),
+    "senior_engineer": ("reasoning", "low"),
+    "code_reviewer": ("reasoning", "medium"),
+    "test_engineer": ("reasoning", "low"),
+    "security_reviewer": ("reasoning", "medium"),
+}
+
 NODE_ROLES = {
     "impact_mapper": "impact_mapper",
     "design_research_architecture": "impact_mapper",
@@ -184,6 +194,27 @@ def build_execution_plan(
     run_id: str, task: Mapping[str, Any], requested_size: Optional[str] = None,
     host: str = DEFAULT_HOST,
 ) -> Dict[str, Any]:
+    revision = ASTRA_CATALOG_REVISION if host == "codex-astra" else None
+    return _build_execution_plan(run_id, task, requested_size, host, revision)
+
+
+def reconstruct_execution_plan(
+    run_id: str, task: Mapping[str, Any], stored_plan: Mapping[str, Any],
+    requested_size: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Rebuild the recorded catalog generation without upgrading historical plans."""
+    host = stored_plan.get("host", DEFAULT_HOST)
+    revision = stored_plan.get("catalog_revision")
+    if "catalog_revision" in stored_plan:
+        if host != "codex-astra" or type(revision) is not int or revision != ASTRA_CATALOG_REVISION:
+            raise ValueError("CATALOG_REVISION_INVALID")
+    return _build_execution_plan(run_id, task, requested_size, host, revision)
+
+
+def _build_execution_plan(
+    run_id: str, task: Mapping[str, Any], requested_size: Optional[str],
+    host: str, catalog_revision: Optional[int],
+) -> Dict[str, Any]:
     task_schema_version = task["schema_version"]
     if task_schema_version == 1:
         recommended, recommendation_reason = recommend_size(task)
@@ -203,6 +234,8 @@ def build_execution_plan(
     for node_key in sorted(NODE_ROLES):
         role = NODE_ROLES[node_key]
         intelligence_class, requested_effort = _class_for_node(node_key, size)
+        if catalog_revision == ASTRA_CATALOG_REVISION and node_key in ASTRA_CORE_ASSIGNMENTS:
+            intelligence_class, requested_effort = ASTRA_CORE_ASSIGNMENTS[node_key]
         model, effort = resolve_assignment(host, intelligence_class, requested_effort)
         validate_model_assignment(node_key, model, effort, host)
         assignments.append({
@@ -249,6 +282,8 @@ def build_execution_plan(
         plan["size_policy_version"] = 2
         plan["size_recommendation_inputs"] = recommendation_inputs
         plan["size_recommendation_reason_codes"] = list(recommendation_codes)
+    if catalog_revision is not None:
+        plan["catalog_revision"] = catalog_revision
     plan["plan_digest"] = sha256_bytes(canonical_bytes(plan))
     return plan
 

@@ -1,18 +1,69 @@
+import copy
+import json
 from pathlib import Path
 from unittest.mock import patch
 
 from graph_engine.config import load_policy
 from graph_engine.contracts import ContractError
+from graph_engine.execution import reconstruct_execution_plan
+from graph_engine.ids import canonical_bytes, sha256_bytes
 from graph_engine.state import StateError
 from graph_engine.validator import (
     compute_delivery_outcome, compute_design_outcome, validate_consolidation_manifest,
-    verify_resume, verify_semantic_state,
+    verify_resume, verify_semantic_state, _validate_execution_plan,
 )
 
 from tests.test_support import GraphCase
 
 
 class ValidatorTests(GraphCase):
+    def test_legacy_astra_pending_and_approved_plans_keep_original_digest(self):
+        initialized = self.initialize(host="codex-astra", approve=False, size="small")
+        legacy = reconstruct_execution_plan("RUN-1", self.task(), {"host": "codex-astra"}, "small")
+        database = self.store.db_path("albanian-live-translate", "RUN-1")
+        with self.store.connect(database) as connection:
+            connection.execute("UPDATE execution_plans SET plan_json=?,plan_digest=? WHERE run_id='RUN-1'",
+                               (json.dumps(legacy), legacy["plan_digest"]))
+            run = connection.execute("SELECT * FROM runs WHERE run_id='RUN-1'").fetchone()
+            self.assertEqual(_validate_execution_plan(connection, run, self.task()), legacy)
+        self.assertNotEqual(initialized["execution_plan_digest"], legacy["plan_digest"])
+        self.graphctl("record", "plan-approval", "--run-id", "RUN-1", "--plan-digest",
+                      legacy["plan_digest"], "--decision", "APPROVE", "--authority-ref",
+                      "authority:test", "--op-id", "legacy-approval")
+        with self.store.connect(database) as connection:
+            run = connection.execute("SELECT * FROM runs WHERE run_id='RUN-1'").fetchone()
+            self.assertEqual(_validate_execution_plan(connection, run, self.task()), legacy)
+
+    def test_astra_plan_tampering_rejects_recomputed_hash_and_retained_approval(self):
+        initialized = self.initialize(host="codex-astra", size="small")
+        original = initialized["execution_plan"]
+        mutations = []
+        for field, value in (("model", "gpt-5.6-luna"), ("reasoning_effort", "high"),
+                             ("intelligence_class", "economy"), ("dispatch_model", "gpt-5.6-luna")):
+            changed = copy.deepcopy(original)
+            assignment = next(row for row in changed["assignments"] if row["node_key"] == "tech_lead")
+            assignment[field] = value
+            mutations.append((changed, "EXECUTION_PLAN_STATE_INVALID"))
+        for marker in (None, True, 2.0, "2", 3):
+            changed = copy.deepcopy(original)
+            changed["catalog_revision"] = marker
+            mutations.append((changed, "EXECUTION_PLAN_STATE_INVALID"))
+        downgraded = copy.deepcopy(original)
+        downgraded.pop("catalog_revision")
+        mutations.append((downgraded, "EXECUTION_PLAN_STATE_INVALID"))
+        legacy = reconstruct_execution_plan("RUN-1", self.task(), {"host": "codex-astra"}, "small")
+        mutations.append((legacy, "EXECUTION_PLAN_APPROVAL_INVALID"))
+        database = self.store.db_path("albanian-live-translate", "RUN-1")
+        with self.store.connect(database) as connection:
+            run = connection.execute("SELECT * FROM runs WHERE run_id='RUN-1'").fetchone()
+            for changed, error in mutations:
+                changed.pop("plan_digest", None)
+                changed["plan_digest"] = sha256_bytes(canonical_bytes(changed))
+                connection.execute("UPDATE execution_plans SET plan_json=?,plan_digest=? WHERE run_id='RUN-1'",
+                                   (json.dumps(changed), changed["plan_digest"]))
+                with self.assertRaisesRegex(StateError, error):
+                    _validate_execution_plan(connection, run, self.task())
+
     def test_persisted_v2_task_drives_reconstruction_independently_of_plan_schema(self):
         initialized = self.initialize_task(self.task_v2())
         self.assertEqual(initialized["execution_plan"]["schema_version"], 1)
