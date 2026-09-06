@@ -3,7 +3,7 @@
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 from .hosts import (
-    DEFAULT_HOST, classify, dispatch_model, economy_effort, publication_assignment,
+    DEFAULT_HOST, LEGACY_HOST, classify, dispatch_model, economy_effort, publication_assignment,
     resolve_assignment, supervisor_recommendation,
 )
 from .ids import canonical_bytes, sha256_bytes
@@ -69,8 +69,8 @@ def _resolved_size_assignments(host: str) -> Dict[str, Dict[str, Tuple[str, str]
     }
 
 
-# Codex-resolved view used by existing tests and default runs.
-SIZE_ASSIGNMENTS: Dict[str, Dict[str, Tuple[str, str]]] = _resolved_size_assignments(DEFAULT_HOST)
+# Frozen baseline view for historical Codex catalog compatibility.
+SIZE_ASSIGNMENTS: Dict[str, Dict[str, Tuple[str, str]]] = _resolved_size_assignments(LEGACY_HOST)
 
 ASTRA_CATALOG_REVISION = 2
 ASTRA_CORE_ASSIGNMENTS = {
@@ -203,7 +203,7 @@ def reconstruct_execution_plan(
     requested_size: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Rebuild the recorded catalog generation without upgrading historical plans."""
-    host = stored_plan.get("host", DEFAULT_HOST)
+    host = stored_plan.get("host", LEGACY_HOST)
     revision = stored_plan.get("catalog_revision")
     if "catalog_revision" in stored_plan:
         if host != "codex-astra" or type(revision) is not int or revision != ASTRA_CATALOG_REVISION:
@@ -289,7 +289,7 @@ def _build_execution_plan(
 
 
 def assignment_for(plan: Mapping[str, Any], node_key: str) -> Mapping[str, str]:
-    host = plan.get("host", DEFAULT_HOST)
+    host = plan.get("host", LEGACY_HOST)
     for assignment in plan["assignments"]:
         if assignment["node_key"] == node_key:
             validate_model_assignment(

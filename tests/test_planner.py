@@ -148,7 +148,7 @@ class PlannerTests(GraphCase):
             }
 
     def _full_delivery_topology_trace(self, size):
-        initialized = self.initialize_task(self.task_v2(), size=size, approve=False)
+        initialized = self.initialize_task(self.task_v2(), size=size, approve=False, host="codex")
         assignments = {
             item["node_key"]: (
                 item["role"], item["intelligence_class"], item["model"],
@@ -224,7 +224,7 @@ class PlannerTests(GraphCase):
         self.assess_fanout(action["fanout_id"], dependencies)
 
     def test_v1_plan_shape_and_digest_remain_frozen(self):
-        plan = build_execution_plan("RUN-1", self.task())
+        plan = build_execution_plan("RUN-1", self.task(), host="codex")
         self.assertEqual(
             set(plan), {
                 "approval_id", "approval_required", "assignments", "host",
@@ -387,16 +387,18 @@ class PlannerTests(GraphCase):
             self.assertEqual(assignments["tech_lead"][0], "gpt-5.6-sol")
             self.assertEqual(assignments["architect"][0], "gpt-5.6-sol")
 
-    def test_codex_is_the_default_test_host(self):
+    def test_astra_is_the_default_host(self):
         plan = build_execution_plan("RUN-1", self.task(), "medium")
-        explicit = build_execution_plan("RUN-1", self.task(), "medium", host="codex")
+        explicit = build_execution_plan("RUN-1", self.task(), "medium", host="codex-astra")
         self.assertEqual(plan, explicit)
         self.assertEqual(plan["host"], DEFAULT_HOST)
         by_key = {item["node_key"]: item for item in plan["assignments"]}
-        self.assertEqual(by_key["tech_lead"]["model"], "gpt-5.6-sol")
-        self.assertEqual(by_key["tech_lead"]["dispatch_model"], "gpt-5.6-sol")
+        self.assertEqual(plan["catalog_revision"], 2)
+        self.assertEqual(by_key["tech_lead"]["model"], "gpt-6-astra")
+        self.assertEqual(by_key["tech_lead"]["reasoning_effort"], "low")
+        self.assertEqual(by_key["tech_lead"]["dispatch_model"], "gpt-6-astra")
         self.assertEqual(by_key["impact_mapper"]["model"], "gpt-5.6-luna")
-        self.assertEqual(plan["supervisor_recommendation"]["model"], "gpt-5.6-sol")
+        self.assertEqual(plan["supervisor_recommendation"]["model"], "gpt-6-astra")
         self.assertEqual(plan["publication_assignment"]["model"], "gpt-5.6-luna")
 
     def test_every_host_can_expand_the_class_matrix(self):
@@ -407,10 +409,26 @@ class PlannerTests(GraphCase):
                     self.assertTrue(model, (host, size, role))
                     self.assertTrue(resolved, (host, size, role))
 
+    def test_default_cli_plan_survives_approval_claim_and_resume(self):
+        initialized = self.initialize(size="medium")
+        self.impact("full_delivery")
+        lead = self.claim()
+        self.assertEqual((lead["model"], lead["reasoning_effort"]), ("gpt-6-astra", "low"))
+        self.graphctl("--ack-degraded-permissions", "--ack-degraded-durability",
+                      "resume", "--run-id", "RUN-1")
+        plan = self.graphctl("status", "--run-id", "RUN-1")["execution_plan"]
+        self.assertEqual(plan["host"], "codex-astra")
+        self.assertEqual(plan["plan_digest"], initialized["execution_plan_digest"])
+        self.assertEqual(plan["status"], "approved")
+
+    def test_historical_missing_host_keeps_codex_catalog(self):
+        legacy = build_execution_plan("RUN-1", self.task(), "medium", host="codex")
+        self.assertEqual(reconstruct_execution_plan("RUN-1", self.task(), {}, "medium"), legacy)
+
     def test_astra_catalog_revision_two_core_assignments_for_both_task_versions(self):
         for task, size in ((task, size) for task in (self.task(), self.task_v2())
                            for size in ("small", "medium", "large")):
-            default = build_execution_plan("RUN-1", task, size)
+            default = build_execution_plan("RUN-1", task, size, host="codex")
             astra = build_execution_plan("RUN-1", task, size, host="codex-astra")
             self.assertEqual(astra["catalog_revision"], 2)
             self.assertNotEqual(astra["plan_digest"], default["plan_digest"])
@@ -514,7 +532,7 @@ class PlannerTests(GraphCase):
         for size in SIZE_ASSIGNMENTS:
             assignments = {
                 item["node_key"]: (item["model"], item["reasoning_effort"])
-                for item in build_execution_plan("RUN-1", self.task(), size)["assignments"]
+                for item in build_execution_plan("RUN-1", self.task(), size, host="codex")["assignments"]
             }
             self.assertEqual(assignments["advisory_reviewer"], SIZE_ASSIGNMENTS[size]["advisory_reviewer"])
             self.assertEqual(assignments["supervisor_design_consolidation"], SIZE_ASSIGNMENTS[size]["supervisor"])
@@ -531,11 +549,17 @@ class PlannerTests(GraphCase):
             "security_reviewer": "security_reviewer",
         }
         profile_root = Path(__file__).resolve().parents[1] / "profile-agents"
+        assignments = {
+            item["node_key"]: item
+            for item in build_execution_plan("RUN-1", self.task(), "medium")["assignments"]
+        }
         for profile_name, assignment_role in profile_roles.items():
             lines = (profile_root / (profile_name + ".toml")).read_text(encoding="utf-8").splitlines()
             effort_line = next(line for line in lines if line.startswith("model_reasoning_effort = "))
             effort = effort_line.split('"', 2)[1]
-            self.assertEqual(effort, SIZE_ASSIGNMENTS["medium"][assignment_role][1], profile_name)
+            model_line = next(line for line in lines if line.startswith("model = "))
+            self.assertEqual(model_line.split('"', 2)[1], assignments[assignment_role]["model"], profile_name)
+            self.assertEqual(effort, assignments[assignment_role]["reasoning_effort"], profile_name)
 
     def test_every_route_has_exact_entry(self):
         policy, _ = load_policy(self.repo)

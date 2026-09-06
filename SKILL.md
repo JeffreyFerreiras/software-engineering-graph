@@ -34,17 +34,17 @@ The task brief records the selected worktree and branch as scope context. Reuse 
 or worktree when the user explicitly directs it; still inspect its status before delegating.
 
 Name the host catalog in the execution plan as `codex`, `codex-astra`, or `cursor`.
-`codex-astra` is an opt-in model catalog for the Codex runtime, not a different runtime. Do not infer the host from a
+`codex-astra` is the default model catalog for the Codex runtime. Do not infer the host from a
 task, prompt, environment variable, or agent self-report. Use a trusted host runtime assertion, or
-ask the human. Pass `--host cursor` to `init` when running in Cursor; omit it or pass `--host codex`
-for the default Codex catalog. Pass `--host codex-astra` only when that catalog is requested or
-approved and the host supports every planned model and effort. Changing catalog is a new plan.
+ask the human. Pass `--host cursor` to `init` when running in Cursor; omit it or pass `--host codex-astra`
+for the default Codex catalog. Use `--host codex` for the explicit Luna/Sol fallback.
+Verify that the host supports every planned model and effort. Changing catalog is a new plan.
 Before choosing or dispatching a catalog, read [Model catalogs](references/model-catalogs.md).
 
 Recommend the host catalog's Supervisor assignment and dispatch that catalog's resolved models. Codex
-defaults remain `gpt-5.6-sol` with `xhigh` reasoning. Cursor defaults use `cursor-grok-4.6` with
+defaults use `gpt-6-astra` with `xhigh` reasoning. Cursor defaults use `cursor-grok-4.6` with
 `high` reasoning rather than ChatGPT Sol, and `composer-2.5` for economy work rather than Luna.
-The optional Astra catalog revision 2 uses Luna `max` for mapper and design research at all sizes;
+The default Astra catalog revision 2 uses Luna `max` for mapper and design research at all sizes;
 Astra `low` for Tech Lead, Senior Engineer, and Test Engineer; and Astra `medium` for Architect,
 Code Reviewer, and Security Reviewer. Supervisor stays Astra `xhigh`, publication stays Luna `max`,
 and unlisted advisory/specialist assignments keep their existing mapping. Unversioned historical
@@ -168,8 +168,8 @@ use one compact announcement that lists every concrete name and identifies which
 <!-- dispatch-transparency:end -->
 
 Resolve model and effort from the approved execution plan. The plan names the host catalog, then uses
-the role intelligence-class matrix with that catalog's vendor mapping. Codex profile defaults remain
-the medium Codex mapping. If a value is not exposed, state that it is inherited or unavailable instead
+the role intelligence-class matrix with that catalog's vendor mapping and revision overrides.
+Reusable Codex profiles match Astra revision 2. If a value is not exposed, state that it is inherited or unavailable instead
 of guessing, and do not dispatch that role until the human approves a plan that makes the assignment
 explicit. Dispatch Cursor reasoning roles with `dispatch_model` from the plan (`cursor-grok-4.6-high`,
 not ChatGPT Sol). Any retry, replacement, or follow-up host, model, or effort change requires a new
