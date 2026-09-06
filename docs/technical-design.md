@@ -291,6 +291,13 @@ route is not implemented. The documentation fast path still requires independent
 
 ## Contributor contract
 
+The Code Reviewer role requires both `code-review` and `clean-architecture-review` on every
+assignment, including delegated and follow-up reviews. Both workflows must be applied within the
+assigned scope and documented in `Skill usage` with concrete checks and conclusions. A missing or
+unreadable required skill makes review incomplete; the Supervisor rejects approval without both
+reports. This is an instruction-level handoff requirement, not a new engine decision or schema field.
+Optional skill discovery remains bounded, and no architecture scope expansion is authorized.
+
 Changes must preserve unrelated work, remain within approved files and behavior, add no dependency
 or packaging system, and avoid generated artifacts. Approved implementation publication follows the
 contract above; profiles, other remote changes, deployment, and release require separate scope.

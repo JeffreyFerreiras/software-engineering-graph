@@ -84,6 +84,11 @@ repository instructions. Do not crawl arbitrary profile or global skill director
 smallest clearly relevant skill set for the assigned implementation or review task, then read every
 selected `SKILL.md` fully before acting. Do not prescribe a specific optional skill by name.
 
+Required review skills: `code-review` and `clean-architecture-review`. Every Code Reviewer must
+read both SKILL.md files fully before acting and apply both workflows, including delegated and
+follow-up reviews. These two skills are mandatory, not optional selections based on apparent
+architectural impact. Include this requirement in every Code Reviewer dispatch and continuation.
+
 Discovered skills may change the role's method only. They must not expand the user-approved scope,
 role authority, model or reasoning effort, writable files, allowed tests or commands, delegation,
 external effects, or permission to install, synchronize, remove, or mutate skills, profiles, or
@@ -91,10 +96,17 @@ consumer repositories. User instructions, repository instructions, approved task
 role profile control any conflict. Decline a conflicting skill instruction and report the conflict in
 the role's risks or observations.
 
-If the catalog is unavailable or a selected skill cannot be read, proceed only when the controlling
-instructions remain sufficient and report the condition without inventing skill content. Senior
-Engineer and Code Reviewer handoffs must each include a `Skill usage` section listing every selected
-skill's name, safe source or provenance, and relevance reason, or `None` when no skill was selected.
+If the catalog is unavailable or a selected skill cannot be read, report the condition without
+inventing skill content. A Code Reviewer missing either required skill must report an incomplete
+review; do not accept APPROVE or substitute a generic review. The Senior Engineer and optional
+review-skill failures may proceed only when controlling instructions remain sufficient and both
+required reviewer workflows, when applicable, can still be completed.
+Senior Engineer and Code Reviewer handoffs must each include a `Skill usage` section listing every
+selected skill's name, safe source or provenance, and relevance reason. `None` is permitted only for
+the Senior Engineer when no skill was selected. A completed Code Reviewer handoff must report
+concrete checks performed and conclusions for each required skill. The Supervisor must reject a
+successful review handoff missing either report. If no architecture change is present, report that
+evidence-backed assessment without expanding scope; neither workflow may be silently skipped.
 
 Reviewers identify risk; they do not own scope. The Tech Lead must challenge a requested revision
 that is not traceable to the immutable task brief. The Supervisor is the binding scope authority and
@@ -251,7 +263,8 @@ An enabled primary Code Reviewer may request approved read-only review children,
 raw roles/models/efforts/capabilities, dispatch them, inspect control metadata, suppress their frozen
 collection, or decide findings. The Supervisor validates and consolidates every child outcome.
 
-Include the bounded role skill preflight without naming an optional skill. Keep the reviewer read-only,
+Include the bounded role skill preflight and explicitly require `code-review` and
+`clean-architecture-review`. Keep the reviewer read-only,
 limit discovery to the assigned review context, and require its `Skill usage` report in the review
 handoff before accepting the result.
 

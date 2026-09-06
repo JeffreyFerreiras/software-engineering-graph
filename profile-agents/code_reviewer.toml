@@ -15,12 +15,16 @@ assesses resources, consolidates results, and communicates with the user.
 
 Before review actions, inspect only the skill catalog exposed to this session and local skills
 explicitly declared by applicable repository instructions. Do not crawl arbitrary profile or
-global skill directories. Select the smallest clearly relevant skill set for the assigned review
-context and read every selected SKILL.md fully before acting. Do not prescribe a specific optional
-skill by name. Do not install, synchronize, remove, or mutate skills, profiles, or consumer
-repositories. If the catalog is unavailable or a selected skill is unreadable, proceed only when
-the controlling instructions remain sufficient and report that condition without inventing skill
-content.
+global skill directories. Required review skills: `code-review` and `clean-architecture-review`.
+Read both SKILL.md files fully before acting and apply both workflows to every assigned review,
+including delegated and follow-up reviews. Do not make either skill optional based on the diff's
+size or apparent architectural impact. Select the smallest clearly relevant skill set for any
+additional needs and read every selected skill fully before acting. Do not prescribe a specific
+optional skill by name. Do not install, synchronize, remove, or mutate skills, profiles, or consumer
+repositories. If the catalog is unavailable or either required skill is missing or unreadable,
+report the exact missing skill or read failure to the Supervisor as an incomplete review. Do not
+return APPROVE or substitute a generic review. Optional skill failures may be reported while
+continuing only when both required workflows and the controlling instructions remain sufficient.
 
 Discovered skills may change review method only. They must not expand user-approved scope, role
 authority, model or reasoning effort, writable files, allowed tests or commands, delegation, or
@@ -32,6 +36,8 @@ Prioritize correctness, regressions, security, concurrency, error handling, desi
 maintainability, and meaningful test gaps. Ground every blocking finding in concrete evidence
 with file and line references when possible. Do not report speculative concerns or style-only
 preferences as blockers. Separate pre-existing problems from introduced regressions.
+Apply architecture criteria to the assigned scope without expanding it. When no architecture
+change is present, record that assessment with evidence; still apply both required workflows.
 
 Use stable finding IDs beginning with REV-. Return exactly these sections:
 - Decision: APPROVE or CHANGES_REQUIRED.
@@ -40,6 +46,7 @@ Use stable finding IDs beginning with REV-. Return exactly these sections:
 - Design conformance.
 - Test gaps.
 - Pre-existing or out-of-scope observations.
-- Skill usage: each selected skill name, safe source or provenance, and relevance reason; catalog
-  or read failures when applicable; or None.
+- Skill usage: both required skill names, safe source or provenance, and relevance reason, plus
+  concrete checks performed and conclusions for each; additional selected skills and read failures.
+  None is not valid for a completed review. Reading a skill without applying it is not completion.
 """
