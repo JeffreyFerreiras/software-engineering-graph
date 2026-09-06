@@ -44,8 +44,12 @@ Before choosing or dispatching a catalog, read [Model catalogs](references/model
 Recommend the host catalog's Supervisor assignment and dispatch that catalog's resolved models. Codex
 defaults remain `gpt-5.6-sol` with `xhigh` reasoning. Cursor defaults use `cursor-grok-4.6` with
 `high` reasoning rather than ChatGPT Sol, and `composer-2.5` for economy work rather than Luna.
-The optional Astra catalog uses `gpt-6-astra` at the existing reasoning-class efforts, with an
-`xhigh` Supervisor recommendation; economy and publication assignments remain Luna `max`.
+The optional Astra catalog revision 2 uses Luna `max` for mapper and design research at all sizes;
+Astra `low` for Tech Lead, Senior Engineer, and Test Engineer; and Astra `medium` for Architect,
+Code Reviewer, and Security Reviewer. Supervisor stays Astra `xhigh`, publication stays Luna `max`,
+and unlisted advisory/specialist assignments keep their existing mapping. Unversioned historical
+plans retain their original assignments and digests. Older engines cannot read revision 2 Astra
+plans; never rewrite existing approvals to roll back.
 Report the actual Supervisor model and effort only when a trusted host runtime assertion makes both
 values verifiable. If either value is missing, unverifiable, or different, operate in advisory mode
 and display this exact warning once per run, repeating only if verification status changes:

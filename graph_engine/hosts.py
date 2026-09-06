@@ -14,6 +14,7 @@ from typing import Dict, Optional, Tuple
 INTELLIGENCE_CLASSES = ("economy", "reasoning", "primary-thread")
 DEFAULT_HOST = "codex"
 REASONING_DISPATCH_WEIGHTS = {"high": 3, "xhigh": 4, "max": 5}
+MODEL_DISPATCH_WEIGHTS = {("gpt-6-astra", "medium"): 3}
 
 # (intelligence_class, requested_effort) -> (model, reasoning_effort, dispatch_model)
 HOST_MATRIX: Dict[str, Dict[Tuple[str, str], Tuple[str, str, str]]] = {
@@ -27,6 +28,7 @@ HOST_MATRIX: Dict[str, Dict[Tuple[str, str], Tuple[str, str, str]]] = {
     },
     "codex-astra": {
         ("economy", "max"): ("gpt-5.6-luna", "max", "gpt-5.6-luna"),
+        ("reasoning", "low"): ("gpt-6-astra", "low", "gpt-6-astra"),
         ("reasoning", "medium"): ("gpt-6-astra", "medium", "gpt-6-astra"),
         ("reasoning", "high"): ("gpt-6-astra", "high", "gpt-6-astra"),
         ("reasoning", "xhigh"): ("gpt-6-astra", "xhigh", "gpt-6-astra"),
@@ -111,6 +113,8 @@ def publication_assignment(host: str) -> Tuple[str, str, str]:
 
 def dispatch_weight_for(model: str, effort: str) -> Optional[int]:
     """Return the engine delegation weight for a concrete host model pair."""
+    if (model, effort) in MODEL_DISPATCH_WEIGHTS:
+        return MODEL_DISPATCH_WEIGHTS[(model, effort)]
     if model == "primary-thread":
         return None
     for host in HOST_MATRIX:
@@ -131,7 +135,7 @@ def supported_dispatch_weights() -> Dict[Tuple[str, str], int]:
             if intelligence_class == "economy":
                 weights[(row[0], row[1])] = 3
             elif intelligence_class == "reasoning":
-                weight = REASONING_DISPATCH_WEIGHTS.get(row[1])
+                weight = dispatch_weight_for(row[0], row[1])
                 if weight is not None:
                     weights[(row[0], row[1])] = weight
     return weights
