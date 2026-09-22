@@ -1,2 +1,0 @@
-src/ParcelPilot.Application/Devices/ILabelPrinter.cs
-src/ParcelPilot.Infrastructure/Devices/WarehouseLabelPrinter.cs
